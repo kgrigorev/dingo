@@ -6,9 +6,9 @@ import (
 )
 
 type (
-	// Module is default entry point for dingo Modules.
+	// Module is the default entry point for dingo Modules.
 	// The Configure method is called once during initialization
-	// and let's the module setup Bindings for the provided Injector.
+	// and lets the module set up Bindings for the provided Injector.
 	Module interface {
 		Configure(injector *Injector)
 	}
@@ -53,7 +53,7 @@ func TryModule(modules ...Module) (resultingError error) {
 var typeOfModuleFunc = reflect.TypeOf(ModuleFunc(nil))
 
 // resolveDependencies tries to get a complete list of all modules, including all dependencies
-// known can be empty initially, and will then be used for subsequent recursive calls
+// known can be empty initially, and will then be used for later recursive calls
 func resolveDependencies(modules []Module, known map[interface{}]struct{}) []Module {
 	final := make([]Module, 0, len(modules))
 
