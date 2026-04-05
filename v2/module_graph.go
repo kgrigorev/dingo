@@ -67,46 +67,33 @@ func (modGraph *ModGraph) DependenciesOf(module dingo.Module) ([]dingo.Module, e
 		return nil, fmt.Errorf("module not found in graph: %s", ident)
 	}
 
-	//g := &revGraph{modGraph}
-
-	return collect(modGraph, id, modGraph.idMap)
+	return collect(modGraph.reversed(), id, modGraph.idMap)
 }
 
 func collect(g graph.Directed, from int64, idMap map[int64]dingo.Module) ([]dingo.Module, error) {
-	if g.Node(from) == nil {
+	start := g.Node(from)
+	if start == nil {
 		return nil, fmt.Errorf("node not found in graph: %d", from)
 	}
 
-	fmt.Println("from", from, g.Node(from))
-
 	dependencies := make([]dingo.Module, 0)
 
-	iter := g.To(from)
-
-	for iter.Next() {
-		start := iter.Node()
-
-		bfs := traverse.BreadthFirst{
-			Visit: func(node graph.Node) {
-				fmt.Println("visiting node", node)
-			},
-
-			Traverse: func(edge graph.Edge) bool {
-
-				fmt.Println("traversing edge", edge)
-				return true
-			},
+	bfs := traverse.BreadthFirst{}
+	bfs.Walk(g, start, func(node graph.Node, depth int) bool {
+		if start.ID() != node.ID() {
+			dependency := idMap[node.ID()]
+			dependencies = append(dependencies, dependency)
 		}
-		bfs.Walk(g, start, func(node graph.Node, depth int) bool {
-			fmt.Println("start, node", start, node)
-			if start.ID() != node.ID() {
-				dependency := idMap[node.ID()]
-				dependencies = append(dependencies, dependency)
-			}
 
-			return false // false = keep walking
-		})
-	}
+		return false // false = keep walking
+	})
+
+	sort.SliceStable(dependencies, func(i, j int) bool {
+		m1 := dependencies[i]
+		m2 := dependencies[j]
+
+		return modLess(m1, m2)
+	})
 
 	return dependencies, nil
 }
@@ -115,10 +102,8 @@ func (modGraph *ModGraph) orderByName(nodes []graph.Node) {
 	sort.SliceStable(nodes, func(i, j int) bool {
 		m1 := modGraph.idMap[nodes[i].ID()]
 		m2 := modGraph.idMap[nodes[j].ID()]
-		n1 := identity(m1)
-		n2 := identity(m2)
 
-		return n1.String() < n2.String()
+		return modLess(m1, m2)
 	})
 }
 
@@ -156,6 +141,10 @@ func (modGraph *ModGraph) addModule(module dingo.Module) (int64, error) {
 	return newNode.ID(), nil
 }
 
+func (modGraph *ModGraph) reversed() graph.Directed {
+	return &revGraph{modGraph}
+}
+
 func identity(module dingo.Module) fmt.Stringer {
 	var key fmt.Stringer = reflect.TypeOf(module)
 	if key == typeOfModuleFunc {
@@ -179,4 +168,15 @@ func (g revGraph) To(i int64) graph.Nodes {
 
 func (g revGraph) Edge(uid, vid int64) graph.Edge {
 	return g.Directed.Edge(vid, uid)
+}
+
+func (g revGraph) HasEdgeFromTo(uid, vid int64) bool {
+	return g.Directed.HasEdgeFromTo(vid, uid)
+}
+
+func modLess(m1, m2 dingo.Module) bool {
+	n1 := identity(m1)
+	n2 := identity(m2)
+
+	return n1.String() < n2.String()
 }

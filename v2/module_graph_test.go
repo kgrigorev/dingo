@@ -151,6 +151,12 @@ func TestModGraph_DependenciesOf(t *testing.T) {
 			start:   new(C),
 			want:    []dingo.Module{new(B), new(D)},
 		},
+		{
+			name:    "module A depends on B, C and D",
+			modules: allModules(),
+			start:   new(A),
+			want:    []dingo.Module{new(B), new(C), new(D)},
+		},
 	}
 
 	for _, test := range tests {
@@ -158,10 +164,10 @@ func TestModGraph_DependenciesOf(t *testing.T) {
 			modGraph, err := v2.NewModGraph(test.modules...)
 			require.NoError(t, err)
 
-			dependenies, err := modGraph.DependenciesOf(test.start)
+			dependencies, err := modGraph.DependenciesOf(test.start)
 			require.NoError(t, err)
 
-			assert.Equalf(t, test.want, dependenies, "DependenciesOf()")
+			assert.Equalf(t, test.want, dependencies, "DependenciesOf()")
 		})
 	}
 }
