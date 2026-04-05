@@ -1,10 +1,10 @@
-package v2_test
+package internal_test
 
 import (
 	"testing"
 
 	"flamingo.me/dingo"
-	v2 "flamingo.me/dingo/v2"
+	v2 "flamingo.me/dingo/internal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
