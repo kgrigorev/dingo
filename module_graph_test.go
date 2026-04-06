@@ -1,10 +1,9 @@
-package internal_test
+package dingo_test
 
 import (
 	"testing"
 
 	"flamingo.me/dingo"
-	v2 "flamingo.me/dingo/internal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,17 +22,24 @@ var (
 )
 
 type (
-	A struct{ withCycle bool }
+	A struct {
+		withCycle   bool
+		SampleText1 string `inject:"test1"`
+	}
 	B struct{}
 	C struct{ withCycle bool }
 	D struct{}
-	E struct{}
+	E struct {
+		SampleText2 string `inject:"test2"`
+	}
 )
 
-func (a *A) Configure(_ *dingo.Injector) {
+func (a *A) Configure(i *dingo.Injector) {
+	i.Bind(new(string)).AnnotatedWith("test2").ToInstance("test2")
 }
 
-func (b *B) Configure(_ *dingo.Injector) {
+func (b *B) Configure(i *dingo.Injector) {
+	i.Bind(new(string)).AnnotatedWith("test1").ToInstance("test1")
 }
 
 func (c *C) Configure(_ *dingo.Injector) {
@@ -83,7 +89,7 @@ func TestModGraph_HasCycles(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			modGraph, err := v2.NewModGraph(test.modules...)
+			modGraph, err := dingo.NewModGraph(test.modules...)
 			if assert.NoError(t, err) {
 				assert.Equalf(t, test.want, modGraph.HasCycles(), "HasCycles()")
 			}
@@ -111,7 +117,7 @@ func TestModGraph_TopologicallySorted(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			modGraph, err := v2.NewModGraph(test.modules...)
+			modGraph, err := dingo.NewModGraph(test.modules...)
 			require.NoError(t, err)
 
 			sorted, err := modGraph.TopologicallySorted()
@@ -161,7 +167,7 @@ func TestModGraph_DependenciesOf(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			modGraph, err := v2.NewModGraph(test.modules...)
+			modGraph, err := dingo.NewModGraph(test.modules...)
 			require.NoError(t, err)
 
 			dependencies, err := modGraph.DependenciesOf(test.start)
@@ -170,4 +176,15 @@ func TestModGraph_DependenciesOf(t *testing.T) {
 			assert.Equalf(t, test.want, dependencies, "DependenciesOf()")
 		})
 	}
+}
+
+func TestWitInjector(t *testing.T) {
+	injector, err := dingo.NewInjector()
+	require.NoError(t, err)
+
+	//modules := []dingo.Module{new(E), new(D), new(C), new(B), new(A)}
+	modules := []dingo.Module{new(A), new(B), new(C), new(D), new(E)}
+
+	err = injector.InitModules(modules...)
+	assert.NoError(t, err)
 }
