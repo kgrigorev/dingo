@@ -1,8 +1,9 @@
-package dingo
+package dingo_test
 
 import (
 	"testing"
 
+	"flamingo.me/dingo"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -17,6 +18,14 @@ type (
 		B *circB `inject:""`
 	}
 
+	circG struct {
+		H *circH `inject:""`
+	}
+
+	circH struct {
+		G *circG `inject:""`
+	}
+
 	circCProvider  func() circCInterface
 	circCInterface interface{}
 	circC          struct {
@@ -29,13 +38,11 @@ type (
 	}
 )
 
-func TestDingoCircula(t *testing.T) {
-	EnableCircularTracing()
-	defer func() {
-		traceCircular = nil
-	}()
+func TestDingoCircular(t *testing.T) {
+	dingo.EnableCircularTracing()
+	defer dingo.DisableCircularTracing()
 
-	injector, err := NewInjector()
+	injector, err := dingo.NewInjector()
 	assert.NoError(t, err)
 
 	assert.Panics(t, func() {
@@ -70,5 +77,22 @@ func TestDingoCircula(t *testing.T) {
 
 	assert.Panics(t, func() {
 		d.A()
+	})
+}
+
+func TestDingoCircular2(t *testing.T) {
+	dingo.EnableCircularTracing()
+	defer dingo.DisableCircularTracing()
+
+	injector, err := dingo.NewInjector()
+	assert.NoError(t, err)
+
+	assert.Panics(t, func() {
+		i, err := injector.GetInstance(new(circG))
+		assert.NoError(t, err)
+		_, ok := i.(*circG)
+		if !ok {
+			t.Fail()
+		}
 	})
 }

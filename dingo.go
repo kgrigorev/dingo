@@ -29,6 +29,10 @@ func EnableCircularTracing() {
 	traceCircular = make([]circularTraceEntry, 0)
 }
 
+func DisableCircularTracing() {
+	traceCircular = nil
+}
+
 func EnableInjectionTracing() {
 	injectionTracing = true
 }
