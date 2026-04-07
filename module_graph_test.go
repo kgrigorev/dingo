@@ -1,6 +1,8 @@
 package dingo_test
 
 import (
+	"fmt"
+	"reflect"
 	"testing"
 
 	"flamingo.me/dingo"
@@ -32,7 +34,35 @@ type (
 	E struct {
 		SampleText2 string `inject:"test2"`
 	}
+
+	Foo struct {
+		bar Baz
+	}
+
+	Bar struct {
+		spam *Spam `inject:""`
+	}
+
+	Baz interface {
+		Bar()
+	}
+
+	Spam struct {
+		bar Baz `inject:""`
+	}
 )
+
+func (f *Foo) Inject(bar Baz) *Foo {
+	f.bar = bar
+
+	fmt.Println("injected implementation of Bar with type", reflect.TypeOf(bar))
+
+	return f
+}
+
+func (b *Bar) Bar() {
+	fmt.Println("Bar() method called")
+}
 
 func (a *A) Configure(i *dingo.Injector) {
 	i.Bind(new(string)).AnnotatedWith("test2").ToInstance("test2")
@@ -40,12 +70,15 @@ func (a *A) Configure(i *dingo.Injector) {
 
 func (b *B) Configure(i *dingo.Injector) {
 	i.Bind(new(string)).AnnotatedWith("test1").ToInstance("test1")
+
+	i.Bind(new(Spam)).To(new(Spam))
 }
 
 func (c *C) Configure(_ *dingo.Injector) {
 }
 
-func (d *D) Configure(_ *dingo.Injector) {
+func (d *D) Configure(i *dingo.Injector) {
+	i.Bind(new(Baz)).To(new(Bar))
 }
 
 func (e *E) Configure(_ *dingo.Injector) {
