@@ -17,7 +17,7 @@ type (
 		eager         bool
 		annotatedWith string
 		scope         Scope
-		sourceModule  *Module
+		source        Module
 	}
 
 	// Instance holds quick-references to type and value
