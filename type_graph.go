@@ -14,8 +14,6 @@ type (
 		idMap     map[int64]reflect.Type
 		index     map[fmt.Stringer]int64
 		lineAttrs map[int64]lineAttr
-		requires  map[int64]struct{}
-		Provides  map[int64]struct{}
 	}
 
 	lineAttr struct {
@@ -30,8 +28,6 @@ func newTypeGraph() (*typeGraph, error) {
 		DirectedGraph: multi.NewDirectedGraph(),
 		index:         make(map[fmt.Stringer]int64),
 		lineAttrs:     make(map[int64]lineAttr),
-		requires:      make(map[int64]struct{}),
-		Provides:      make(map[int64]struct{}),
 	}, nil
 }
 
@@ -56,6 +52,18 @@ type info struct {
 
 type infoOpt func(*info)
 
+func withOptional(value bool) infoOpt {
+	return func(i *info) {
+		i.optional = value
+	}
+}
+
+func withAnnotation(text string) infoOpt {
+	return func(i *info) {
+		i.annotation = text
+	}
+}
+
 func applyOpts(opts ...infoOpt) info {
 	var x info
 	for _, opt := range opts {
@@ -73,12 +81,15 @@ func (tg *typeGraph) Process(bindings []*Binding) error {
 			"to instance", binding.instance,
 			"to type", binding.to)
 
-		traverseDependencies(binding.to)
+		tg.traverseDependencies(binding)
 	}
 	return nil
 }
 
-func traverseDependencies(rt reflect.Type) error {
+func (tg *typeGraph) traverseDependencies(binding *Binding) error {
+
+	rt := binding.to
+
 	if rt == nil {
 		return nil
 	}
@@ -111,8 +122,15 @@ func traverseDependencies(rt reflect.Type) error {
 			if methodFound {
 				for it := range method.Type.Ins() {
 					fmt.Println("depends on type", it, "as Inject parameter")
+					err := tg.AddRequiresEdge(current, it, binding.source)
+					if err != nil {
+						return err
+					}
+
+					injectlist = append(injectlist, it)
 				}
 			}
+
 			injectlist = append(injectlist, current.Elem())
 
 		// inject into struct fields
@@ -134,6 +152,11 @@ func traverseDependencies(rt reflect.Type) error {
 					}
 					tag = strings.Split(tag, ",")[0]
 
+					err := tg.AddRequiresEdge(current, field.Type, binding.source, withOptional(optional), withAnnotation(tag))
+					if err != nil {
+						return err
+					}
+
 					fmt.Println("depends on type", field.Type, "as injected field", currentFieldName, optional)
 					injectlist = append(injectlist, field.Type)
 				}
@@ -153,17 +176,17 @@ func traverseDependencies(rt reflect.Type) error {
 }
 
 func (tg *typeGraph) AddRequiresEdge(
-	value reflect.Value,
-	dependency reflect.Type,
+	from reflect.Type,
+	to reflect.Type,
 	module Module,
 	opts ...infoOpt,
 ) error {
 	x := applyOpts(opts...)
 
-	ida := tg.ensure(value)
-	idb := tg.ensure(dependency)
+	ida := tg.ensure(from)
+	idb := tg.ensure(to)
 
-	fmt.Printf("type %12v (%d)\trequires %12v (%d)\t(module: %v, info: %v)\n", value.Type(), ida, dependency, idb, module, x)
+	fmt.Printf("type %12v (%d)\trequires %12v (%d)\t(module: %v, info: %v)\n", from, ida, to, idb, module, x)
 
 	na := tg.Node(ida)
 	nb := tg.Node(idb)
@@ -182,46 +205,6 @@ func (tg *typeGraph) AddRequiresEdge(
 	}
 
 	tg.lineAttrs[requires.ID()] = attrs
-	tg.requires[requires.ID()] = struct{}{}
 
 	return nil
-}
-
-func (tg *typeGraph) AddProvidesEdge(
-	value reflect.Value,
-	dependency reflect.Type,
-	module Module,
-	opts ...infoOpt,
-) error {
-	x := applyOpts(opts...)
-
-	ida := tg.ensure(value)
-	idb := tg.ensure(dependency)
-
-	fmt.Printf("type %12v (%d)\tprovides %12v (%d)\t(module: %v, info: %v)\n", value.Type(), ida, dependency, idb, reflect.TypeOf(module), x)
-
-	na := tg.Node(ida)
-	nb := tg.Node(idb)
-
-	provides := tg.NewLine(na, nb)
-	tg.SetLine(provides)
-
-	attrs := lineAttr{
-		optional:   x.optional,
-		annotation: x.annotation,
-	}
-
-	if module != nil {
-		idm := tg.ensure(module)
-		attrs.module = idm
-	}
-
-	tg.lineAttrs[provides.ID()] = attrs
-	tg.Provides[provides.ID()] = struct{}{}
-
-	return nil
-}
-
-func (tg *typeGraph) Abc() {
-
 }
