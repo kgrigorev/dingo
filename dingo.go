@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"reflect"
 	"strings"
+	"sync/atomic"
 )
 
 const (
@@ -51,6 +52,9 @@ type (
 		stage                uint                                 // current stage
 		delayed              []interface{}                        // delayed bindings
 		buildEagerSingletons bool                                 // weather to build singletons
+		currentModule        atomic.Pointer[Module]
+		mg                   atomic.Pointer[modGraph]
+		tg                   atomic.Pointer[typeGraph]
 	}
 
 	// overrides are evaluated lazy, so they are scheduled here
@@ -111,13 +115,30 @@ func (injector *Injector) Child() (*Injector, error) {
 func (injector *Injector) InitModules(modules ...Module) error {
 	injector.stage = INIT
 
-	modules = resolveDependencies(modules, nil)
-	for _, module := range modules {
+	err := injector.initGraphs(modules...)
+	if err != nil {
+		return err
+	}
+
+	sorted, err := injector.mg.Load().TopologicallySorted()
+	if err != nil {
+		return fmt.Errorf("resolveDependencies: %w", err)
+	}
+
+	//modules, err = injector.resolveDependencies(modules, nil)
+	//if err != nil {
+	//	return err
+	//}
+
+	for _, module := range sorted {
 		if err := injector.requestInjection(module, traceCircular); err != nil {
 			erroredModule := reflect.TypeOf(module).Elem()
 			return fmt.Errorf("initmodules: injection into %q failed: %w", erroredModule.PkgPath()+"."+erroredModule.Name(), err)
 		}
+
+		injector.beforeModuleConfigure(module)
 		module.Configure(injector)
+		injector.afterModuleConfigure(module)
 	}
 
 	// evaluate overrides when modules were loaded
@@ -604,10 +625,14 @@ func (injector *Injector) BindMulti(what interface{}) *Binding {
 		bindtype = bindtype.Elem()
 	}
 	binding := new(Binding)
+	if cm := injector.currentModule.Load(); cm != nil {
+		binding.source = *cm
+	}
 	binding.typeof = bindtype
 	imb := injector.multibindings[bindtype]
 	imb = append(imb, binding)
 	injector.multibindings[bindtype] = imb
+
 	return binding
 }
 
@@ -618,6 +643,9 @@ func (injector *Injector) BindMap(what interface{}, key string) *Binding {
 		bindtype = bindtype.Elem()
 	}
 	binding := new(Binding)
+	if cm := injector.currentModule.Load(); cm != nil {
+		binding.source = *cm
+	}
 	binding.typeof = bindtype
 	bindingMap := injector.mapbindings[bindtype]
 	if bindingMap == nil {
@@ -663,8 +691,12 @@ func (injector *Injector) Bind(what interface{}) *Binding {
 		bindtype = bindtype.Elem()
 	}
 	binding := new(Binding)
+	if cm := injector.currentModule.Load(); cm != nil {
+		binding.source = *cm
+	}
 	binding.typeof = bindtype
 	injector.bindings[bindtype] = append(injector.bindings[bindtype], binding)
+
 	return binding
 }
 
@@ -689,10 +721,13 @@ func (injector *Injector) requestInjection(object interface{}, circularTrace []c
 	if _, ok := object.(reflect.Value); !ok {
 		object = reflect.ValueOf(object)
 	}
-	var injectlist = []reflect.Value{object.(reflect.Value)}
-	var i int
-	var current reflect.Value
-	var err error
+
+	var (
+		injectlist = []reflect.Value{object.(reflect.Value)}
+		i          int
+		current    reflect.Value
+		err        error
+	)
 
 	wrapErr := func(err error) error {
 		path := current.Type().PkgPath()
@@ -796,5 +831,51 @@ func (injector *Injector) requestInjection(object interface{}, circularTrace []c
 		default:
 		}
 	}
+
 	return nil
+}
+
+func (injector *Injector) initGraphs(modules ...Module) error {
+	mg, err := newModuleGraph(modules...)
+	if err != nil {
+		return fmt.Errorf("cannot initialize module graph: %w", err)
+	}
+
+	injector.mg.Store(mg)
+
+	tg, err := newTypeGraph()
+	if err != nil {
+		return fmt.Errorf("cannot initialize type graph: %w", err)
+	}
+
+	injector.tg.Store(tg)
+
+	return nil
+}
+
+func (injector *Injector) beforeModuleConfigure(module Module) {
+	injector.currentModule.Store(&module)
+}
+
+func (injector *Injector) afterModuleConfigure(module Module) {
+	injector.currentModule.Store(nil)
+
+	var target []*Binding
+
+	for _, bindings := range injector.bindings {
+		for _, binding := range bindings {
+			if binding == nil {
+				continue
+			}
+
+			if binding.source != module {
+				continue
+			}
+
+			target = append(target, binding)
+		}
+	}
+
+	tg := injector.tg.Load()
+	tg.Process(target)
 }
