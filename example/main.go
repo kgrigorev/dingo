@@ -7,6 +7,7 @@ import (
 	"flamingo.me/dingo"
 	"flamingo.me/dingo/example/application"
 	"flamingo.me/dingo/example/paypal"
+	"flamingo.me/dingo/internal"
 )
 
 type stdloggerTransactionLog struct {
@@ -31,7 +32,7 @@ func (*defaultModule) Configure(injector *dingo.Injector) {
 
 func main() {
 	// create a new injector and load modules
-	injector, err := dingo.NewInjector(
+	injector, err := internal.NewInjector(
 		new(paypal.Module),
 		new(defaultModule),
 	)

@@ -1,4 +1,4 @@
-package dingo
+package internal
 
 import (
 	"reflect"
@@ -6,7 +6,7 @@ import (
 )
 
 type (
-	// Scope defines a scope's behaviour
+	// Scope defines a scope's behavior
 	Scope interface {
 		ResolveType(t reflect.Type, annotation string, unscoped func(t reflect.Type, annotation string, optional bool) (reflect.Value, error)) (reflect.Value, error)
 	}

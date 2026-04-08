@@ -1,4 +1,4 @@
-package dingo
+package internal
 
 import (
 	"fmt"
@@ -6,9 +6,9 @@ import (
 )
 
 type (
-	// Module is default entry point for dingo Modules.
-	// The Configure method is called once during initialization
-	// and let's the module setup Bindings for the provided Injector.
+	// Module is the default entry point for dingo Modules.
+	// The Configure method is called once during initialization,
+	// and let's the module set up Bindings for the provided Injector.
 	Module interface {
 		Configure(injector *Injector)
 	}
@@ -25,7 +25,7 @@ type (
 	}
 )
 
-// Configure call the original ModuleFunc with the given *Injector.
+// Configure calls the original ModuleFunc with the given *Injector.
 func (f ModuleFunc) Configure(injector *Injector) {
 	f(injector)
 }

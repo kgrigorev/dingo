@@ -1,4 +1,4 @@
-package dingo
+package internal
 
 import (
 	"strconv"
