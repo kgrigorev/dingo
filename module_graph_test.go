@@ -48,7 +48,7 @@ type (
 	}
 
 	Spam struct {
-		bar Baz `inject:""`
+		//bar Baz `inject:""`
 	}
 )
 
