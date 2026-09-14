@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 
+	"flamingo.me/dingo/internal/bridge"
+	"flamingo.me/dingo/internal/typename"
 	"gonum.org/v1/gonum/graph"
 	"gonum.org/v1/gonum/graph/simple"
 	"gonum.org/v1/gonum/graph/topo"
@@ -147,7 +149,8 @@ func (mg *modGraph) Sort() ([]Module, error) {
 		}
 	}
 
-	return nil, ErrModuleSort
+	// coverage: unreachable through the public API; topo.SortStabilized reports cycles through the branch above
+	return nil, fmt.Errorf("%w: %w", ErrModuleSort, err)
 }
 
 // orderByInsertion is the tiebreaker passed to topo.SortStabilized.
@@ -208,16 +211,26 @@ func (mg *modGraph) addModule(order int, module Module) (int64, error) {
 	return newNode.ID(), nil
 }
 
-// moduleKeyOf returns a comparable key that uniquely identifies a module.
-// Ordinary modules are keyed by reflect.Type. ModuleFunc values also include
-// the wrapped func value so that distinct funcs — including distinct closures
-// created from the same func literal — remain distinct modules.
+// moduleKeyOf returns a comparable key that uniquely identifies a module. Adapters implementing
+// bridge.WrappedModule are looked through, so a module and its adapted forms are one module.
+// Ordinary modules are keyed by reflect.Type. ModuleFunc values also include the wrapped func
+// value so that distinct funcs — including distinct closures created from the same func literal —
+// remain distinct modules. A wrapped function value that is not a root Module (another package's
+// ModuleFunc) is keyed by value the same way. An unwrapped module takes exactly the path it took
+// before adapters existed.
 func moduleKeyOf(module Module) moduleKey {
-	modType := reflect.TypeOf(module)
+	inner := bridge.Innermost(module)
+	modType := reflect.TypeOf(inner)
 	key := moduleKey{typ: modType}
 
 	if modType == typeOfModuleFunc {
-		key.function = reflect.ValueOf(module)
+		key.function = reflect.ValueOf(inner)
+
+		return key
+	}
+
+	if _, isRootModule := inner.(Module); !isRootModule && modType != nil && modType.Kind() == reflect.Func {
+		key.function = reflect.ValueOf(inner)
 	}
 
 	return key
@@ -237,41 +250,7 @@ func moduleName(module Module) string {
 	return moduleKeyOf(module).name()
 }
 
-// qualifiedTypeName is like reflect.Type.String but uses the full import path
-// instead of the short package name for named types. It handles common
-// composite types recursively (pointer, slice, array, map, channel) so that
-// any named element/key type inside them is also fully qualified. Anonymous
-// composite types (struct, interface, func) fall back to reflect.Type.String,
-// as does anything else not covered above.
+// qualifiedTypeName delegates to typename.Qualified; the printer is shared with the v2 facade.
 func qualifiedTypeName(typ reflect.Type) string {
-	if typ.PkgPath() != "" {
-		return typ.PkgPath() + "." + typ.Name()
-	}
-
-	//nolint:exhaustive // only kinds that can wrap a named type are qualified, everything else falls back to reflect.Type.String
-	switch typ.Kind() {
-	case reflect.Pointer:
-		return "*" + qualifiedTypeName(typ.Elem())
-	case reflect.Slice:
-		return "[]" + qualifiedTypeName(typ.Elem())
-	case reflect.Array:
-		return fmt.Sprintf("[%d]%s", typ.Len(), qualifiedTypeName(typ.Elem()))
-	case reflect.Map:
-		return "map[" + qualifiedTypeName(typ.Key()) + "]" + qualifiedTypeName(typ.Elem())
-	case reflect.Chan:
-		var prefix string
-
-		switch typ.ChanDir() {
-		case reflect.RecvDir:
-			prefix = "<-chan "
-		case reflect.SendDir:
-			prefix = "chan<- "
-		case reflect.BothDir:
-			prefix = "chan "
-		}
-
-		return prefix + qualifiedTypeName(typ.Elem())
-	}
-
-	return typ.String()
+	return typename.Qualified(typ)
 }
