@@ -4,7 +4,7 @@
 
 **Goal:** Ship `flamingo.me/dingo/v2`, a type-safe generic facade (`injector.Bind[T]().To[U]()`) over the existing v0 reflection engine, together with the root changes it needs and the `compat` bridge that lets v0 and v2 modules run on one injector.
 
-**Architecture:** Two pull requests. The root PR (released as `v0.5.0`) adds two private packages (`internal/bridge`, `internal/typename`), a facade slot on the engine's `Injector` filled eagerly through a bridge hook, adapter-aware module identity, one exported sentinel, one wrapped error cause and one pointer guard. The v2 PR adds the `v2/` module: a thin `Injector`/`Binding[T]` facade whose every method validates at bind time and then forwards to the engine through `reflect.New` type carriers, plus `compat`, the black-box suite driven by the 182-ID catalogue, the README, the example and the CI changes.
+**Architecture:** Two pull requests, neither gated on a release (see "How the v2 module resolves the engine"). The root PR — which semanticore releases as `v0.5.0` in *this* repository — adds two private packages (`internal/bridge`, `internal/typename`), a facade slot on the engine's `Injector` filled eagerly through a bridge hook, adapter-aware module identity, one exported sentinel, one wrapped error cause and one pointer guard. The v2 PR adds the `v2/` module: a thin `Injector`/`Binding[T]` facade whose every method validates at bind time and then forwards to the engine through `reflect.New` type carriers, plus `compat`, the black-box suite driven by the 182-ID catalogue, the README, the example and the CI changes.
 
 **Tech Stack:** Go 1.27 generic methods (v2 module), Go 1.25.8 (root module), `reflect`, testify, gonum (engine, unchanged), golangci-lint v2.13.2, GitHub Actions, semanticore.
 
@@ -15,7 +15,7 @@
 Copied from the spec. Every task's requirements implicitly include this section.
 
 - Root module `flamingo.me/dingo` keeps `go 1.25.8`. Do not raise it. The `errors.AsType` TODO in `module.go:131` stays.
-- v2 module path is `flamingo.me/dingo/v2`, directory `v2/`, `go 1.27`, `require flamingo.me/dingo v0.5.0`, **no `replace` directive**.
+- v2 module path is `flamingo.me/dingo/v2`, directory `v2/`, `go 1.27`, `require flamingo.me/dingo v0.4.1`, **no `replace` directive**. The engine is resolved by the committed `go.work`, not by that version; see "How the v2 module resolves the engine".
 - `go.work` at the repository root: `go 1.27`, `use (. ./v2)`, committed; `go.work.sum` committed when non-empty.
 - Runtime behavior identical to v0.4.1 except the three changes under "Verified deviations".
 - Every existing v0 call takes today's code path. Root `go test ./...` passes before and after the root PR with **no test edited** except the `TestDingoCircula` → `TestDingoCircular` rename; new tests are added, never changed.
@@ -48,7 +48,18 @@ Two further engine facts the plan relies on, verified the same way and *not* in 
 
 ## How to read this plan
 
-**Two parts, strictly sequential.** Part A is the root PR (branch `feat/v2-bridge`, released by semanticore as `v0.5.0`). Part B is the v2 PR (branch `feat/v2-generic-api`). Part B's `v2/go.mod` requires `flamingo.me/dingo v0.5.0` without a `replace`, so **Part B starts only after `v0.5.0` is tagged and visible on `proxy.golang.org`** (`GOWORK=off go list -m flamingo.me/dingo@v0.5.0` from a directory outside the repository prints the version).
+**Two parts, sequential in content but not gated on a release.** Part A is the root PR (branch `feat/v2-bridge`). Part B is the v2 PR (branch `feat/v2-generic-api`). Part B builds on Part A's `internal/bridge` and `internal/typename`, so Part A's code must exist on the branch Part B starts from — but Part B does **not** wait for a tagged release. See the next section.
+
+## How the v2 module resolves the engine
+
+`flamingo.me/dingo` is a vanity import path. It resolves through `flamingo.me`, not through this repository's Git remote, and the module it serves is the upstream one — versions up to `v0.4.1` are on `proxy.golang.org` today (`GOWORK=off go list -m -versions flamingo.me/dingo`). Two consequences the rest of this plan depends on:
+
+- **A release of this repository does not appear at that path.** Requiring `flamingo.me/dingo v0.5.0` would wait on a `v0.5.0` published upstream, which is a much heavier gate than semanticore cutting a tag here. A hash-based pseudo-version has the same problem: it would have to name a commit in the upstream repository.
+- **The committed `go.work` makes this a non-issue for every build that matters.** In workspace mode Go resolves `flamingo.me/dingo` to the local `.` module and never fetches, so the `require` line's version is inert. The facade is therefore built and tested against the engine *at the same commit*, which is what Task B22's `tests` job says it wants.
+
+So `v2/go.mod` requires `flamingo.me/dingo v0.4.1` — a version that actually exists, chosen only so the file is resolvable outside the workspace — and the workspace supplies the real engine. The one job that leaves the workspace, `tests-v2-published`, cannot pass until an engine carrying `internal/bridge` is published at the vanity path, and stays `continue-on-error` until then.
+
+**If this work is destined for upstream,** the endgame is unchanged: once Part A merges upstream and `v0.5.0` is on the proxy, bump the `require` line to `v0.5.0`, drop `continue-on-error` from `tests-v2-published`, and the module builds as any consumer would build it. That bump is Task B24's, not a precondition for starting.
 
 **What is given verbatim and what is not.** Every **production** file in this plan is given as complete, final code: that is where correctness is hard and where the engine's behavior had to be verified. **Test** files are given as complete code for the structurally novel ones (helpers, fixtures, tables, drivers, gates) and, for the large tables, as their full row set — a table row *is* the test. Where a task says "one row per catalogue line", the catalogue's Case column is the assertion to write and `catalogue_test.go` (Task B20) fails the build if a row is missing, so completeness is machine-checked rather than left to memory. No step says "add tests" without saying which behavior, which fixture and which assertion.
 
@@ -91,7 +102,7 @@ Two further engine facts the plan relies on, verified the same way and *not* in 
 | Path | Responsibility |
 |---|---|
 | `go.work`, `go.work.sum` | workspace over `.` and `./v2` |
-| `v2/go.mod`, `v2/go.sum` | module `flamingo.me/dingo/v2`, `go 1.27`, requires root `v0.5.0` and testify |
+| `v2/go.mod`, `v2/go.sum` | module `flamingo.me/dingo/v2`, `go 1.27`, requires root `v0.4.1` (inert under `go.work`) and testify |
 | `v2/doc.go` | package documentation with the canonical example |
 | `v2/errors.go` | `ErrInvalidBinding`, the re-exported root sentinels, `bindError`, `invalid` |
 | `v2/typename.go` | `qualified`, `typeName[T]`, `carrier`, `keyType[T]` |
@@ -1136,21 +1147,25 @@ Body sections:
 - *What existing callers see* — every existing call takes the same code path; the API diff shows one exported addition. Name the three behavior changes honestly: the pointer-to-interface message now reads `pointer to interface is not allowed`; the module-sort error now carries its cause; and `InitModules`' injection error no longer panics for a value-typed module (link `TestInitModules_NamesAValueTypedModuleWithoutPanicking` and say that `TryModule(ValueModule{})` panics on `master` today). Do **not** claim the guard is unreachable — see "Verified deviations", item 2.
 - *Eager, idempotent facade attachment* — why lazy attachment would race the unsynchronized binding map, and why a second attachment in `Child` would break a child's `InitModules`.
 
-Do not add reviewers and do not merge from this session; semanticore opens `Release v0.5.0` when the PR merges.
+Do not add reviewers and do not merge from this session; semanticore opens `Release v0.5.0` when the PR merges. That release is this repository's own — it does not publish to the `flamingo.me/dingo` vanity path — and Part B does not wait for it.
 
-- [ ] **Step 3: Gate for Part B**
+- [ ] **Step 3: Hand-off to Part B**
 
-Part B may start when `v0.5.0` is tagged and this prints the version from a directory outside the repository:
+There is **no release gate**. Part B resolves the engine through the committed `go.work`, not through the proxy — see "How the v2 module resolves the engine". Part B may start as soon as Part A's code is on the branch it builds from: either Part A is merged to `master` and Part B branches from there, or Part B branches from Part A's head while that PR is in review.
+
+Confirm the hand-off with a workspace build rather than a proxy lookup — this is what Task B1 step 3 will run:
 
 ```bash
-cd /tmp && GOWORK=off go list -m flamingo.me/dingo@v0.5.0
+cd /home/user/dingo && go build ./... && go test ./internal/...
 ```
+
+Expected: clean, with `internal/bridge` and `internal/typename` present. That is everything Part B consumes from Part A.
 
 ---
 
 # Part B — the v2 PR (`feat/v2-generic-api`)
 
-Part B starts only after Task A8 step 3 passes. Every path below is relative to the repository root; the v2 package's Go files live in `v2/` and declare `package dingo`, importing the engine as `v0 "flamingo.me/dingo"`.
+Part B starts once Part A's code is on the branch it builds from (Task A8 step 3). Every path below is relative to the repository root; the v2 package's Go files live in `v2/` and declare `package dingo`, importing the engine as `v0 "flamingo.me/dingo"`.
 
 **Naming conventions used by every Part B task, so the tasks stay consistent:**
 
@@ -1229,10 +1244,12 @@ module flamingo.me/dingo/v2
 go 1.27
 
 require (
-	flamingo.me/dingo v0.5.0
+	flamingo.me/dingo v0.4.1
 	github.com/stretchr/testify v1.12.1
 )
 ```
+
+`v0.4.1` is a placeholder, not the engine this module is built against. `flamingo.me/dingo` is a vanity path serving the upstream module, and the committed `go.work` resolves it to the local `.` module, so the version here is inert in every workspace build; it exists only so `v2/go.mod` is resolvable outside the workspace. Do not add a `replace`. See "How the v2 module resolves the engine"; Task B24 bumps this line if and when an engine carrying `internal/bridge` is published at that path.
 
 `v2/doc.go`:
 
@@ -1281,7 +1298,9 @@ go version   # GOTOOLCHAIN=auto should now report 1.27.x inside the workspace
 
 Expected: all clean. `v2` has no tests yet, which `go test` reports as `[no test files]`, not a failure.
 
-If `flamingo.me/dingo v0.5.0` cannot be resolved, Task A8 step 3 did not actually pass; stop and finish Part A.
+These commands all run **in workspace mode**, where `flamingo.me/dingo` resolves to the local `.` module. If the build cannot find `flamingo.me/dingo/internal/bridge`, Part A's code is not on this branch; rebase onto it rather than touching `v2/go.mod`.
+
+Do not run `go mod tidy` inside `v2/` with `GOWORK=off` — outside the workspace it resolves the `require` line to the upstream `v0.4.1`, which has no `internal/bridge`, and will rewrite the file to something that cannot build.
 
 - [ ] **Step 4: Commit**
 
@@ -4897,7 +4916,7 @@ Run: `cat .github/workflows/main.yml .github/workflows/golangci-lint.yml .github
 |---|---|
 | `tests` | matrix `['1.27', '1.*']`; run `go test -shuffle=on -race ./... ./v2/...` in workspace mode, so the facade is tested against the engine at the same commit. Shuffle is the cheap detector for order dependence through the global `Singleton` |
 | `tests-v0` (new) | matrix `['1.25', '1.*']`, `GOWORK=off`, `go test -race ./...`: the root exactly as its consumers build it |
-| `tests-v2-published` (new) | `GOWORK=off`, `working-directory: v2`, `go test -race ./...`: v2 against the root version its `go.mod` requires, fetched from the proxy. `continue-on-error: ${{ github.event_name == 'pull_request' }}`, so a coordinated engine-plus-facade PR can be green while the root change it needs is not yet on the proxy, while on pushes to `master` the job is required |
+| `tests-v2-published` (new) | `GOWORK=off`, `working-directory: v2`, `go test -race ./...`: v2 against the root version its `go.mod` requires, fetched from the proxy. **`continue-on-error: true` unconditionally**, not only on pull requests. `flamingo.me/dingo` is a vanity path serving the upstream module, so until an engine carrying `internal/bridge` is published there this job cannot pass on any event — making it required on `master` would redden the default branch permanently. It is kept because it is the signal that tells you the day the bump in Task B24 becomes possible. Drop `continue-on-error` in the same commit as that bump |
 | `coverage` | one profile per module. The v2 profile runs over `go list ./... \| grep -Ev '/(example\|miniexample)$'` — anchored, so a future package whose path merely *contains* "example" stays in the profile. When `v2/coverage.min` exists, a step reads it and fails below it; until Task B24 adds that file the job only reports the figure. The root profile is reported as today and not gated |
 | `static-checks` | `go vet ./... ./v2/...`; `gofmt` and `goimports` over the tree; `go generate` with a clean diff (still a no-op); and a new root smoke test: `go run ./miniexample 2>&1 \| grep -q 'here is an example log'` |
 | all jobs | replace `go get -v -t -d ./...` with `go mod download` in each module: `go get` in workspace mode targets one module |
@@ -4915,7 +4934,7 @@ Add a guard that skips the run when the head commit message contains `[skip rele
 ```bash
 CGO_ENABLED=1 go test -shuffle=on -race ./... ./v2/...
 GOWORK=off go test -race ./...
-cd v2 && GOWORK=off go test -race ./... ; cd ..   # expected to fail until v0.5.0 is on the proxy
+cd v2 && GOWORK=off go test -race ./... ; cd ..   # expected to fail: the vanity path serves the upstream engine, which has no internal/bridge
 go vet ./... ./v2/...
 gofmt -l . && go run golang.org/x/tools/cmd/goimports@latest -w . && git diff --quiet
 go generate ./... && git diff --quiet
@@ -4967,7 +4986,7 @@ Open a **draft** PR against `master`, no reviewers assigned. Title: `feat: add f
 
 Body sections: a summary; the migration table; the deliberate tightenings against v0; the compat lifetime; and the manual release steps — the `v2.0.0` tag on the merge commit and the `[skip release]` marker the squash commit must carry. The main commit carries a `BREAKING CHANGE:` footer describing the API, for the changelog.
 
-State explicitly in the body that `tests-v2-published` is advisory on pull requests and required on `master`, so a reviewer does not read its result as a failure.
+State explicitly in the body that `tests-v2-published` is advisory everywhere for now, and why: `flamingo.me/dingo` is a vanity path serving the upstream module, so that job cannot pass until an engine carrying `internal/bridge` is published there. A reviewer should not read its red as a failure of this PR. The workspace-mode `tests` job is the one that gates.
 
 ### Task B24: release and the follow-up commit
 
@@ -4985,6 +5004,17 @@ gh release create v2.0.0 --title "v2.0.0" --notes "…"
 ```
 
 Tags for a major-version subdirectory are **bare** (`v2.0.0`, not `v2/v2.0.0`), as the Go module reference specifies for the `vN/` layout.
+
+- [ ] **Step 1a: Bump the engine requirement, if it has become possible**
+
+Only once an engine carrying `internal/bridge` is published at `flamingo.me/dingo` (`GOWORK=off go list -m -versions flamingo.me/dingo` lists it):
+
+```bash
+cd v2 && GOWORK=off go get flamingo.me/dingo@v0.5.0 && GOWORK=off go mod tidy
+cd .. && GOWORK=off go test -C v2 -race ./...
+```
+
+In the same commit, drop `continue-on-error` from the `tests-v2-published` job so it becomes a real gate. Until that day this step is a no-op and the job stays advisory — it is not a blocker for the release.
 
 - [ ] **Step 2: Commit the coverage floor**
 
