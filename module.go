@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"flamingo.me/dingo/internal/typename"
 	"gonum.org/v1/gonum/graph"
 	"gonum.org/v1/gonum/graph/simple"
 	"gonum.org/v1/gonum/graph/topo"
@@ -237,41 +238,7 @@ func moduleName(module Module) string {
 	return moduleKeyOf(module).name()
 }
 
-// qualifiedTypeName is like reflect.Type.String but uses the full import path
-// instead of the short package name for named types. It handles common
-// composite types recursively (pointer, slice, array, map, channel) so that
-// any named element/key type inside them is also fully qualified. Anonymous
-// composite types (struct, interface, func) fall back to reflect.Type.String,
-// as does anything else not covered above.
+// qualifiedTypeName delegates to typename.Qualified; the printer is shared with the v2 facade.
 func qualifiedTypeName(typ reflect.Type) string {
-	if typ.PkgPath() != "" {
-		return typ.PkgPath() + "." + typ.Name()
-	}
-
-	//nolint:exhaustive // only kinds that can wrap a named type are qualified, everything else falls back to reflect.Type.String
-	switch typ.Kind() {
-	case reflect.Pointer:
-		return "*" + qualifiedTypeName(typ.Elem())
-	case reflect.Slice:
-		return "[]" + qualifiedTypeName(typ.Elem())
-	case reflect.Array:
-		return fmt.Sprintf("[%d]%s", typ.Len(), qualifiedTypeName(typ.Elem()))
-	case reflect.Map:
-		return "map[" + qualifiedTypeName(typ.Key()) + "]" + qualifiedTypeName(typ.Elem())
-	case reflect.Chan:
-		var prefix string
-
-		switch typ.ChanDir() {
-		case reflect.RecvDir:
-			prefix = "<-chan "
-		case reflect.SendDir:
-			prefix = "chan<- "
-		case reflect.BothDir:
-			prefix = "chan "
-		}
-
-		return prefix + qualifiedTypeName(typ.Elem())
-	}
-
-	return typ.String()
+	return typename.Qualified(typ)
 }
