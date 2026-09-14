@@ -66,7 +66,7 @@ During the interim:
 
 **Ending the interim** is Task B24 step 1a: once Part A is merged upstream and `v0.5.0` is on the proxy, bump the `require` line to `v0.5.0` and drop `continue-on-error` in the same commit. Nothing else changes.
 
-**Landing Part A upstream.** Part A touches only Go source; a fork's `CLAUDE.md`, `.claude/` tooling and `skills-lock.json` are fork-local and do not travel. The three `docs/v2-generic-api/` documents do travel — the plan is unreadable without the design doc and catalogue it argues from. Rebase Part A's code commits onto `upstream/master`, keep the docs commit with them, and drop any content-neutral merge commits a fork's branch history accumulated.
+**Landing the root changes upstream.** They touch only Go source; a fork's `CLAUDE.md`, `.claude/` tooling and `skills-lock.json` are fork-local and do not travel. Of the documents, the design doc and the test catalogue travel — they are the reasoning and the behaviour contract a reviewer needs — and **this plan does not**: it is an execution script for whoever does the work, not a design artifact. Rebase the code commits onto `upstream/master`, put the two documents in one commit ahead of them, and drop any content-neutral merge commits a fork's branch history accumulated.
 
 **What is given verbatim and what is not.** Every **production** file in this plan is given as complete, final code: that is where correctness is hard and where the engine's behavior had to be verified. **Test** files are given as complete code for the structurally novel ones (helpers, fixtures, tables, drivers, gates) and, for the large tables, as their full row set — a table row *is* the test. Where a task says "one row per catalogue line", the catalogue's Case column is the assertion to write and `catalogue_test.go` (Task B20) fails the build if a row is missing, so completeness is machine-checked rather than left to memory. No step says "add tests" without saying which behavior, which fixture and which assertion.
 
@@ -1135,9 +1135,13 @@ Diff the exported API against `master`:
 
 ```bash
 go doc -all . > /tmp/api-after.txt
-git stash --include-untracked && go doc -all . > /tmp/api-before.txt && git stash pop
+git worktree add -q /tmp/api-base origin/master
+(cd /tmp/api-base && go doc -all . > /tmp/api-before.txt)
+git worktree remove --force /tmp/api-base
 diff /tmp/api-before.txt /tmp/api-after.txt
 ```
+
+Do not use `git stash` here. By this point every task is committed, so the stash is a no-op and the comparison is `master` against itself — it passes no matter what the branch changed.
 
 Expected: exactly one addition, `ErrPointerToInterface`. Anything else is a mistake to fix before pushing.
 
