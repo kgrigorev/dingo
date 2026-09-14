@@ -325,3 +325,26 @@ func TestWithInjector(t *testing.T) {
 	err = injector.InitModules(modules...)
 	assert.NoError(t, err)
 }
+
+// TestModuleKeyOf_KeysWrappedModulesByTheInnermostModule pins module identity through adapters.
+// Catches: a wrapped module keyed by the adapter's type, which collapses every adapted module
+// into one graph node so only the first is configured; and a wrapped ModuleFunc keyed by type
+// alone, which would merge two distinct closures.
+func TestModuleKeyOf_KeysWrappedModulesByTheInnermostModule(t *testing.T) {
+	t.Parallel()
+
+	inner := new(tryModuleOk)
+	assert.Equal(t, moduleKeyOf(inner), moduleKeyOf(&wrappedModule{inner: inner}))
+	assert.Equal(t, moduleKeyOf(inner), moduleKeyOf(&wrappedModule{inner: &wrappedModule{inner: inner}}))
+	assert.NotEqual(t, moduleKeyOf(inner), moduleKeyOf(&wrappedModule{inner: new(tryModuleFail)}))
+
+	first, second := ModuleFunc(func(*Injector) {}), ModuleFunc(func(*Injector) {})
+	assert.Equal(t, moduleKeyOf(first), moduleKeyOf(&wrappedModule{inner: first}))
+	assert.NotEqual(t, moduleKeyOf(&wrappedModule{inner: first}), moduleKeyOf(&wrappedModule{inner: second}))
+
+	// a function value that is not a root Module — the shape of a v2 ModuleFunc — is keyed by value
+	foreignFirst, foreignSecond := func(string) {}, func(string) {}
+	assert.NotEqual(t,
+		moduleKeyOf(&wrappedModule{inner: foreignFirst}),
+		moduleKeyOf(&wrappedModule{inner: foreignSecond}))
+}
