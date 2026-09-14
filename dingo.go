@@ -115,6 +115,7 @@ func (injector *Injector) InitModules(modules ...Module) error {
 	mg := newModuleGraph()
 
 	err := mg.Add(modules...)
+	// coverage: unreachable through the public API; Depends() []Module cannot fail, so Add never returns an error
 	if err != nil {
 		return fmt.Errorf("%w: failed adding modules to the graph: %w", ErrInitModules, err)
 	}
