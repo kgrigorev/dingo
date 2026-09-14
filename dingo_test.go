@@ -438,3 +438,73 @@ func TestNewInjector_AttachesTheFacadeEagerlyAndExactlyOnce(t *testing.T) {
 	assert.Nil(t, bridge.Facade((*Injector)(nil)))
 	assert.Nil(t, bridge.Facade("not an engine"))
 }
+
+// wrappedModule is a minimal module adapter: it implements bridge.WrappedModule structurally and
+// forwards nothing else, so the engine's Innermost path is what these tests exercise.
+type wrappedModule struct{ inner any }
+
+func (w *wrappedModule) Configure(*Injector) {}
+
+func (w *wrappedModule) DingoWrappedModule() any { return w.inner }
+
+// valueModuleWithUnresolvableField is a value-typed module whose inject field cannot be resolved,
+// so injection fails before any field is set. A value-typed module reaching the error branch is
+// what makes the unguarded reflect.TypeOf(module).Elem() panic.
+type valueModuleWithUnresolvableField struct {
+	Missing testInterface `inject:"nobody-binds-this"`
+}
+
+func (valueModuleWithUnresolvableField) Configure(*Injector) {}
+
+// TestInitModules_NamesAValueTypedModuleWithoutPanicking pins the pointer guard on the module type
+// named in InitModules' injection error (review decision 12).
+// Catches: reflect.TypeOf(module).Elem() on a value-typed module panicking with "reflect: Elem of
+// invalid type", which today turns a reportable injection failure into a panic and which
+// bridge.Innermost would otherwise make reachable for every adapted value module.
+func TestInitModules_NamesAValueTypedModuleWithoutPanicking(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		module Module
+	}{
+		{name: "unwrapped, reachable through TryModule today", module: valueModuleWithUnresolvableField{}},
+		{name: "wrapped in an adapter", module: &wrappedModule{inner: valueModuleWithUnresolvableField{}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			injector, err := NewInjector()
+			require.NoError(t, err)
+
+			var initErr error
+
+			require.NotPanics(t, func() { initErr = injector.InitModules(tt.module) })
+			require.Error(t, initErr)
+			assert.ErrorContains(t, initErr,
+				`injection into "flamingo.me/dingo.valueModuleWithUnresolvableField" failed`)
+		})
+	}
+}
+
+// TestInitModules_InjectsTheInnermostModule pins that a wrapped module's fields are set before
+// Configure, on the inner value rather than on the adapter.
+// Catches: an adapter being injected instead of the module it wraps, which leaves every adapted
+// module's dependencies nil inside Configure.
+func TestInitModules_InjectsTheInnermostModule(t *testing.T) {
+	t.Parallel()
+
+	injector, err := NewInjector()
+	require.NoError(t, err)
+
+	injector.Bind((*testInterface)(nil)).To(interfaceImpl1{})
+
+	inner := &struct {
+		Dependency testInterface `inject:""`
+	}{}
+
+	require.NoError(t, injector.InitModules(&wrappedModule{inner: inner}))
+	assert.NotNil(t, inner.Dependency)
+}

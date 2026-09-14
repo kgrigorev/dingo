@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"flamingo.me/dingo/internal/bridge"
+	"flamingo.me/dingo/internal/typename"
 )
 
 const (
@@ -159,9 +160,8 @@ func (injector *Injector) InitModules(modules ...Module) error {
 	}
 
 	for _, module := range modules {
-		if err := injector.requestInjection(module, traceCircular); err != nil {
-			erroredModule := reflect.TypeOf(module).Elem()
-			return fmt.Errorf("initmodules: injection into %q failed: %w", erroredModule.PkgPath()+"."+erroredModule.Name(), err)
+		if err := injector.requestInjection(bridge.Innermost(module), traceCircular); err != nil {
+			return fmt.Errorf("initmodules: injection into %q failed: %w", moduleTypeName(module), err)
 		}
 		module.Configure(injector)
 	}
@@ -217,6 +217,19 @@ func (injector *Injector) InitModules(modules ...Module) error {
 		return nil
 	}
 	return injector.BuildEagerSingletons(false)
+}
+
+// moduleTypeName names the innermost module's type for InitModules' injection error. It strips one
+// pointer level only when there is one, so a value-typed module (MyModule{}, a ModuleFunc, or any
+// value module behind an adapter) does not panic on reflect.Type.Elem. For the pointer modules
+// every existing caller passes, the result is the same "<import path>.<Name>" as before.
+func moduleTypeName(module Module) string {
+	typ := reflect.TypeOf(bridge.Innermost(module))
+	if typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+
+	return typename.Qualified(typ)
 }
 
 // SetBuildEagerSingletons can be used to disable or enable building of eager singletons during InitModules
