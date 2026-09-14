@@ -148,7 +148,8 @@ func (mg *modGraph) Sort() ([]Module, error) {
 		}
 	}
 
-	return nil, ErrModuleSort
+	// coverage: unreachable through the public API; topo.SortStabilized reports cycles through the branch above
+	return nil, fmt.Errorf("%w: %w", ErrModuleSort, err)
 }
 
 // orderByInsertion is the tiebreaker passed to topo.SortStabilized.
