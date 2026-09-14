@@ -18,7 +18,11 @@ const (
 var (
 	ErrInitModules           = errors.New("initialization of modules failed")
 	ErrInvalidInjectReceiver = errors.New("usage of 'Inject' method with struct receiver is not allowed")
-	errPointersToInterface   = errors.New(" Do not use pointers to interface")
+	// ErrPointerToInterface is wrapped by the injection error for a pointer-to-interface field,
+	// and by the v2 facade's GetInstance for a pointer-to-interface request.
+	ErrPointerToInterface = errors.New("pointer to interface is not allowed")
+	// errPointersToInterface keeps the old name so that a grep for it still finds the declaration.
+	errPointersToInterface = ErrPointerToInterface
 
 	traceCircular    []circularTraceEntry
 	injectionTracing = false

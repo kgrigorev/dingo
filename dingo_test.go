@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type (
@@ -350,4 +351,21 @@ func TestInjectionOfInterfacePointer(t *testing.T) {
 
 	_, err = injector.GetInstance(new(someStructWithInvalidInterfacePointer))
 	assert.Error(t, err, "Expected error")
+}
+
+// TestInjection_PointerToInterfaceWrapsExportedSentinel pins the exported sentinel and its
+// message, which the v2 facade re-exports and matches with errors.Is.
+// Catches: a second, unexported error value being wrapped, which would make
+// errors.Is(err, dingo.ErrPointerToInterface) false for a caller of either package.
+func TestInjection_PointerToInterfaceWrapsExportedSentinel(t *testing.T) {
+	t.Parallel()
+
+	injector, err := NewInjector()
+	require.NoError(t, err)
+
+	injector.Bind((*testInterface)(nil)).To(interfaceImpl1{})
+
+	_, err = injector.GetInstance(new(someStructWithInvalidInterfacePointer))
+	require.ErrorIs(t, err, ErrPointerToInterface)
+	assert.ErrorContains(t, err, "pointer to interface is not allowed")
 }
