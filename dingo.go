@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"reflect"
 	"strings"
+
+	"flamingo.me/dingo/internal/bridge"
 )
 
 const (
@@ -27,6 +29,17 @@ var (
 	traceCircular    []circularTraceEntry
 	injectionTracing = false
 )
+
+func init() {
+	bridge.Facade = func(engine any) any {
+		injector, ok := engine.(*Injector)
+		if !ok || injector == nil {
+			return nil
+		}
+
+		return injector.facade
+	}
+}
 
 // EnableCircularTracing activates dingo's trace feature to find circular dependencies
 // this is super expensive (memory wise), so it should only be used for debugging purposes
@@ -52,6 +65,7 @@ type (
 		stage                uint                                 // current stage
 		delayed              []interface{}                        // delayed bindings
 		buildEagerSingletons bool                                 // whether to build singletons
+		facade               any                                  // the v2 facade, attached by bridge.NewFacade; nil when v2 is not linked
 	}
 
 	// overrides are evaluated lazy, so they are scheduled here
@@ -86,6 +100,9 @@ func NewInjector(modules ...Module) (*Injector, error) {
 	injector.BindScope(Singleton)
 	injector.BindScope(ChildSingleton)
 
+	// attach the v2 facade, when the v2 package is linked into the binary
+	injector.attachFacade()
+
 	// init current modules
 	return injector, injector.InitModules(modules...)
 }
@@ -106,6 +123,22 @@ func (injector *Injector) Child() (*Injector, error) {
 	newInjector.BindScope(NewChildSingletonScope()) // bind a new child-singleton
 
 	return newInjector, nil
+}
+
+// attachFacade fills the facade slot through the bridge hook when the v2 package is linked. It
+// runs inside NewInjector, before any module, so the binding the hook adds never races a
+// resolution; a lazily created facade would write the unsynchronized binding map from
+// compat.Injector or Inspect while resolutions read it.
+//
+// It is idempotent by design: Child() builds its engine with NewInjector, so a child is attached
+// there and exactly once. A second attachment would bind a second, unequal facade for the same
+// key and break the child's next InitModules.
+func (injector *Injector) attachFacade() {
+	if injector.facade != nil || bridge.NewFacade == nil {
+		return
+	}
+
+	injector.facade = bridge.NewFacade(injector)
 }
 
 // InitModules initializes the injector with the given modules

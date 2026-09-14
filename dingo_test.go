@@ -1,11 +1,14 @@
 package dingo
 
 import (
+	"reflect"
 	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"flamingo.me/dingo/internal/bridge"
 )
 
 type (
@@ -368,4 +371,70 @@ func TestInjection_PointerToInterfaceWrapsExportedSentinel(t *testing.T) {
 	_, err = injector.GetInstance(new(someStructWithInvalidInterfacePointer))
 	require.ErrorIs(t, err, ErrPointerToInterface)
 	assert.ErrorContains(t, err, "pointer to interface is not allowed")
+}
+
+// TestNewInjector_AttachesTheFacadeEagerlyAndExactlyOnce pins eager attachment: the hook runs
+// inside construction, the slot is readable through bridge.Facade, the facade is bound into the
+// engine, and a child gets exactly one facade of its own.
+// Catches: a lazily created facade writing the unsynchronized binding map after InitModules while
+// resolutions read it; and a second attachment in Child, which would append an unequal duplicate
+// binding for the facade key and make the child's next InitModules fail.
+//
+//nolint:paralleltest // installs a process-wide bridge hook for its duration
+func TestNewInjector_AttachesTheFacadeEagerlyAndExactlyOnce(t *testing.T) {
+	type fakeFacade struct{ engine *Injector }
+
+	var created []*Injector
+
+	previous := bridge.NewFacade
+	bridge.NewFacade = func(engine any) any {
+		e, ok := engine.(*Injector)
+		require.True(t, ok)
+
+		created = append(created, e)
+		facade := &fakeFacade{engine: e}
+		e.Bind(fakeFacade{}).ToInstance(facade)
+
+		return facade
+	}
+
+	t.Cleanup(func() { bridge.NewFacade = previous })
+
+	injector, err := NewInjector()
+	require.NoError(t, err)
+	require.Len(t, created, 1)
+	assert.Same(t, injector, created[0])
+
+	facade, ok := bridge.Facade(injector).(*fakeFacade)
+	require.True(t, ok)
+	assert.Same(t, injector, facade.engine)
+
+	bound, err := injector.GetInstance(new(fakeFacade))
+	require.NoError(t, err)
+	assert.Same(t, facade, bound)
+
+	child, err := injector.Child()
+	require.NoError(t, err)
+	require.Len(t, created, 2, "Child attaches exactly one facade, through the NewInjector it calls")
+
+	childFacade, ok := bridge.Facade(child).(*fakeFacade)
+	require.True(t, ok)
+	assert.Same(t, child, childFacade.engine)
+	assert.NotSame(t, facade, childFacade)
+
+	// the child holds exactly one binding for the facade key, so a later InitModules on it (what
+	// Flamingo does per config area) does not hit the duplicate-binding check
+	bindings := 0
+
+	child.Inspect(Inspector{InspectBinding: func(of reflect.Type, _ string, _ reflect.Type, _, _ *reflect.Value, _ Scope) {
+		if of == reflect.TypeOf(fakeFacade{}) {
+			bindings++
+		}
+	}})
+	assert.Equal(t, 1, bindings)
+	require.NoError(t, child.InitModules())
+
+	assert.Nil(t, bridge.Facade(nil))
+	assert.Nil(t, bridge.Facade((*Injector)(nil)))
+	assert.Nil(t, bridge.Facade("not an engine"))
 }
