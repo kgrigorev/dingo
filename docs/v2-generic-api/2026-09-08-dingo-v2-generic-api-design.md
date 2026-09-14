@@ -5,7 +5,7 @@ architecture adopted for Flamingo compatibility), revised 2026-09-14 (spec revie
 `ToType`, `Override` semantics corrected, eager facade attachment, root pointer guard in
 `InitModules`, catalogue statements for every ID; see review decisions 10 to 26)
 Repository: github.com/i-love-flamingo/dingo (import paths `flamingo.me/dingo`, `flamingo.me/dingo/v2`)
-Status: design approved in brainstorming, implementation plan pending
+Status: design approved; the root changes it needs are implemented, the v2 module is not yet
 Appendix: `2026-09-08-dingo-v2-generic-api-test-catalogue.md` (planned test cases by behavior ID)
 
 ## Goal
@@ -1387,8 +1387,6 @@ not lose it.
    `v2/coverage.min` with the measured figure. From that commit on the coverage job gates.
    Cut `release/v0.x` from the `v0.5.0` release commit in the same session, so the first root fix
    after v2 has a branch to be tagged on and nobody tags v0 on master by reflex.
-4. This spec, its appendix and the implementation plan live in the workspace repo on branch
-   `docs/dingo-v2-generic-api` under `docs/superpowers/`.
 
 ## Review decisions
 
