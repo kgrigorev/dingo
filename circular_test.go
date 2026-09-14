@@ -29,7 +29,8 @@ type (
 	}
 )
 
-func TestDingoCircula(t *testing.T) {
+//nolint:paralleltest // manipulates global traceCircular state
+func TestDingoCircular(t *testing.T) {
 	EnableCircularTracing()
 	defer func() {
 		traceCircular = nil
