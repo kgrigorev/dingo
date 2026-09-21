@@ -1,10 +1,14 @@
 package dingo
 
 import (
+	"reflect"
 	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"flamingo.me/dingo/internal/bridge"
 )
 
 type (
@@ -350,4 +354,157 @@ func TestInjectionOfInterfacePointer(t *testing.T) {
 
 	_, err = injector.GetInstance(new(someStructWithInvalidInterfacePointer))
 	assert.Error(t, err, "Expected error")
+}
+
+// TestInjection_PointerToInterfaceWrapsExportedSentinel pins the exported sentinel and its
+// message, which the v2 facade re-exports and matches with errors.Is.
+// Catches: a second, unexported error value being wrapped, which would make
+// errors.Is(err, dingo.ErrPointerToInterface) false for a caller of either package.
+func TestInjection_PointerToInterfaceWrapsExportedSentinel(t *testing.T) {
+	t.Parallel()
+
+	injector, err := NewInjector()
+	require.NoError(t, err)
+
+	injector.Bind((*testInterface)(nil)).To(interfaceImpl1{})
+
+	_, err = injector.GetInstance(new(someStructWithInvalidInterfacePointer))
+	require.ErrorIs(t, err, ErrPointerToInterface)
+	assert.ErrorContains(t, err, "pointer to interface is not allowed")
+}
+
+// TestNewInjector_AttachesTheFacadeEagerlyAndExactlyOnce pins eager attachment: the hook runs
+// inside construction, the slot is readable through bridge.Facade, the facade is bound into the
+// engine, and a child gets exactly one facade of its own.
+// Catches: a lazily created facade writing the unsynchronized binding map after InitModules while
+// resolutions read it; and a second attachment in Child, which would append an unequal duplicate
+// binding for the facade key and make the child's next InitModules fail.
+//
+//nolint:paralleltest // installs a process-wide bridge hook for its duration
+func TestNewInjector_AttachesTheFacadeEagerlyAndExactlyOnce(t *testing.T) {
+	type fakeFacade struct{ engine *Injector }
+
+	var created []*Injector
+
+	previous := bridge.NewFacade
+	bridge.NewFacade = func(engine any) any {
+		e, ok := engine.(*Injector)
+		require.True(t, ok)
+
+		created = append(created, e)
+		facade := &fakeFacade{engine: e}
+		e.Bind(fakeFacade{}).ToInstance(facade)
+
+		return facade
+	}
+
+	t.Cleanup(func() { bridge.NewFacade = previous })
+
+	injector, err := NewInjector()
+	require.NoError(t, err)
+	require.Len(t, created, 1)
+	assert.Same(t, injector, created[0])
+
+	facade, ok := bridge.Facade(injector).(*fakeFacade)
+	require.True(t, ok)
+	assert.Same(t, injector, facade.engine)
+
+	bound, err := injector.GetInstance(new(fakeFacade))
+	require.NoError(t, err)
+	assert.Same(t, facade, bound)
+
+	child, err := injector.Child()
+	require.NoError(t, err)
+	require.Len(t, created, 2, "Child attaches exactly one facade, through the NewInjector it calls")
+
+	childFacade, ok := bridge.Facade(child).(*fakeFacade)
+	require.True(t, ok)
+	assert.Same(t, child, childFacade.engine)
+	assert.NotSame(t, facade, childFacade)
+
+	// the child holds exactly one binding for the facade key, so a later InitModules on it (what
+	// Flamingo does per config area) does not hit the duplicate-binding check
+	bindings := 0
+
+	child.Inspect(Inspector{InspectBinding: func(of reflect.Type, _ string, _ reflect.Type, _, _ *reflect.Value, _ Scope) {
+		if of == reflect.TypeOf(fakeFacade{}) {
+			bindings++
+		}
+	}})
+	assert.Equal(t, 1, bindings)
+	require.NoError(t, child.InitModules())
+
+	assert.Nil(t, bridge.Facade(nil))
+	assert.Nil(t, bridge.Facade((*Injector)(nil)))
+	assert.Nil(t, bridge.Facade("not an engine"))
+}
+
+// wrappedModule is a minimal module adapter: it implements bridge.WrappedModule structurally and
+// forwards nothing else, so the engine's Innermost path is what these tests exercise.
+type wrappedModule struct{ inner any }
+
+func (w *wrappedModule) Configure(*Injector) {}
+
+func (w *wrappedModule) DingoWrappedModule() any { return w.inner }
+
+// valueModuleWithUnresolvableField is a value-typed module whose inject field cannot be resolved,
+// so injection fails before any field is set. A value-typed module reaching the error branch is
+// what makes the unguarded reflect.TypeOf(module).Elem() panic.
+type valueModuleWithUnresolvableField struct {
+	Missing testInterface `inject:"nobody-binds-this"`
+}
+
+func (valueModuleWithUnresolvableField) Configure(*Injector) {}
+
+// TestInitModules_NamesAValueTypedModuleWithoutPanicking pins the pointer guard on the module type
+// named in InitModules' injection error (review decision 12).
+// Catches: reflect.TypeOf(module).Elem() on a value-typed module panicking with "reflect: Elem of
+// invalid type", which today turns a reportable injection failure into a panic and which
+// bridge.Innermost would otherwise make reachable for every adapted value module.
+func TestInitModules_NamesAValueTypedModuleWithoutPanicking(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		module Module
+	}{
+		{name: "unwrapped, reachable through TryModule today", module: valueModuleWithUnresolvableField{}},
+		{name: "wrapped in an adapter", module: &wrappedModule{inner: valueModuleWithUnresolvableField{}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			injector, err := NewInjector()
+			require.NoError(t, err)
+
+			var initErr error
+
+			require.NotPanics(t, func() { initErr = injector.InitModules(tt.module) })
+			require.Error(t, initErr)
+			assert.ErrorContains(t, initErr,
+				`injection into "flamingo.me/dingo.valueModuleWithUnresolvableField" failed`)
+		})
+	}
+}
+
+// TestInitModules_InjectsTheInnermostModule pins that a wrapped module's fields are set before
+// Configure, on the inner value rather than on the adapter.
+// Catches: an adapter being injected instead of the module it wraps, which leaves every adapted
+// module's dependencies nil inside Configure.
+func TestInitModules_InjectsTheInnermostModule(t *testing.T) {
+	t.Parallel()
+
+	injector, err := NewInjector()
+	require.NoError(t, err)
+
+	injector.Bind((*testInterface)(nil)).To(interfaceImpl1{})
+
+	inner := &struct {
+		Dependency testInterface `inject:""`
+	}{}
+
+	require.NoError(t, injector.InitModules(&wrappedModule{inner: inner}))
+	assert.NotNil(t, inner.Dependency)
 }

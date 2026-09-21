@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"flamingo.me/dingo/internal/bridge"
 	"flamingo.me/dingo/internal/typename"
 	"gonum.org/v1/gonum/graph"
 	"gonum.org/v1/gonum/graph/simple"
@@ -148,7 +149,8 @@ func (mg *modGraph) Sort() ([]Module, error) {
 		}
 	}
 
-	return nil, ErrModuleSort
+	// coverage: unreachable through the public API; topo.SortStabilized reports cycles through the branch above
+	return nil, fmt.Errorf("%w: %w", ErrModuleSort, err)
 }
 
 // orderByInsertion is the tiebreaker passed to topo.SortStabilized.
@@ -209,16 +211,26 @@ func (mg *modGraph) addModule(order int, module Module) (int64, error) {
 	return newNode.ID(), nil
 }
 
-// moduleKeyOf returns a comparable key that uniquely identifies a module.
-// Ordinary modules are keyed by reflect.Type. ModuleFunc values also include
-// the wrapped func value so that distinct funcs — including distinct closures
-// created from the same func literal — remain distinct modules.
+// moduleKeyOf returns a comparable key that uniquely identifies a module. Adapters implementing
+// bridge.WrappedModule are looked through, so a module and its adapted forms are one module.
+// Ordinary modules are keyed by reflect.Type. ModuleFunc values also include the wrapped func
+// value so that distinct funcs — including distinct closures created from the same func literal —
+// remain distinct modules. A wrapped function value that is not a root Module (another package's
+// ModuleFunc) is keyed by value the same way. An unwrapped module takes exactly the path it took
+// before adapters existed.
 func moduleKeyOf(module Module) moduleKey {
-	modType := reflect.TypeOf(module)
+	inner := bridge.Innermost(module)
+	modType := reflect.TypeOf(inner)
 	key := moduleKey{typ: modType}
 
 	if modType == typeOfModuleFunc {
-		key.function = reflect.ValueOf(module)
+		key.function = reflect.ValueOf(inner)
+
+		return key
+	}
+
+	if _, isRootModule := inner.(Module); !isRootModule && modType != nil && modType.Kind() == reflect.Func {
+		key.function = reflect.ValueOf(inner)
 	}
 
 	return key

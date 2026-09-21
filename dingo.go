@@ -6,6 +6,9 @@ import (
 	"log/slog"
 	"reflect"
 	"strings"
+
+	"flamingo.me/dingo/internal/bridge"
+	"flamingo.me/dingo/internal/typename"
 )
 
 const (
@@ -18,11 +21,26 @@ const (
 var (
 	ErrInitModules           = errors.New("initialization of modules failed")
 	ErrInvalidInjectReceiver = errors.New("usage of 'Inject' method with struct receiver is not allowed")
-	errPointersToInterface   = errors.New(" Do not use pointers to interface")
+	// ErrPointerToInterface is wrapped by the injection error for a pointer-to-interface field,
+	// and by the v2 facade's GetInstance for a pointer-to-interface request.
+	ErrPointerToInterface = errors.New("pointer to interface is not allowed")
+	// errPointersToInterface keeps the old name so that a grep for it still finds the declaration.
+	errPointersToInterface = ErrPointerToInterface
 
 	traceCircular    []circularTraceEntry
 	injectionTracing = false
 )
+
+func init() {
+	bridge.Facade = func(engine any) any {
+		injector, ok := engine.(*Injector)
+		if !ok || injector == nil {
+			return nil
+		}
+
+		return injector.facade
+	}
+}
 
 // EnableCircularTracing activates dingo's trace feature to find circular dependencies
 // this is super expensive (memory wise), so it should only be used for debugging purposes
@@ -48,6 +66,7 @@ type (
 		stage                uint                                 // current stage
 		delayed              []interface{}                        // delayed bindings
 		buildEagerSingletons bool                                 // whether to build singletons
+		facade               any                                  // the v2 facade, attached by bridge.NewFacade; nil when v2 is not linked
 	}
 
 	// overrides are evaluated lazy, so they are scheduled here
@@ -82,6 +101,9 @@ func NewInjector(modules ...Module) (*Injector, error) {
 	injector.BindScope(Singleton)
 	injector.BindScope(ChildSingleton)
 
+	// attach the v2 facade, when the v2 package is linked into the binary
+	injector.attachFacade()
+
 	// init current modules
 	return injector, injector.InitModules(modules...)
 }
@@ -104,6 +126,22 @@ func (injector *Injector) Child() (*Injector, error) {
 	return newInjector, nil
 }
 
+// attachFacade fills the facade slot through the bridge hook when the v2 package is linked. It
+// runs inside NewInjector, before any module, so the binding the hook adds never races a
+// resolution; a lazily created facade would write the unsynchronized binding map from
+// compat.Injector or Inspect while resolutions read it.
+//
+// It is idempotent by design: Child() builds its engine with NewInjector, so a child is attached
+// there and exactly once. A second attachment would bind a second, unequal facade for the same
+// key and break the child's next InitModules.
+func (injector *Injector) attachFacade() {
+	if injector.facade != nil || bridge.NewFacade == nil {
+		return
+	}
+
+	injector.facade = bridge.NewFacade(injector)
+}
+
 // InitModules initializes the injector with the given modules
 func (injector *Injector) InitModules(modules ...Module) error {
 	injector.stage = INIT
@@ -111,6 +149,7 @@ func (injector *Injector) InitModules(modules ...Module) error {
 	mg := newModuleGraph()
 
 	err := mg.Add(modules...)
+	// coverage: unreachable through the public API; Depends() []Module cannot fail, so Add never returns an error
 	if err != nil {
 		return fmt.Errorf("%w: failed adding modules to the graph: %w", ErrInitModules, err)
 	}
@@ -121,9 +160,8 @@ func (injector *Injector) InitModules(modules ...Module) error {
 	}
 
 	for _, module := range modules {
-		if err := injector.requestInjection(module, traceCircular); err != nil {
-			erroredModule := reflect.TypeOf(module).Elem()
-			return fmt.Errorf("initmodules: injection into %q failed: %w", erroredModule.PkgPath()+"."+erroredModule.Name(), err)
+		if err := injector.requestInjection(bridge.Innermost(module), traceCircular); err != nil {
+			return fmt.Errorf("initmodules: injection into %q failed: %w", moduleTypeName(module), err)
 		}
 		module.Configure(injector)
 	}
@@ -179,6 +217,19 @@ func (injector *Injector) InitModules(modules ...Module) error {
 		return nil
 	}
 	return injector.BuildEagerSingletons(false)
+}
+
+// moduleTypeName names the innermost module's type for InitModules' injection error. It strips one
+// pointer level only when there is one, so a value-typed module (MyModule{}, a ModuleFunc, or any
+// value module behind an adapter) does not panic on reflect.Type.Elem. For the pointer modules
+// every existing caller passes, the result is the same "<import path>.<Name>" as before.
+func moduleTypeName(module Module) string {
+	typ := reflect.TypeOf(bridge.Innermost(module))
+	if typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+
+	return typename.Qualified(typ)
 }
 
 // SetBuildEagerSingletons can be used to disable or enable building of eager singletons during InitModules
