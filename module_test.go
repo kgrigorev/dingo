@@ -326,11 +326,11 @@ func TestWithInjector(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// TestModuleKeyOf_KeysWrappedModulesByTheInnermostModule pins module identity through adapters.
+// TestModuleKeyOf_KeysWrappedModulesByTheUnwrappedModule pins module identity through adapters.
 // Catches: a wrapped module keyed by the adapter's type, which collapses every adapted module
 // into one graph node so only the first is configured; and a wrapped ModuleFunc keyed by type
 // alone, which would merge two distinct closures.
-func TestModuleKeyOf_KeysWrappedModulesByTheInnermostModule(t *testing.T) {
+func TestModuleKeyOf_KeysWrappedModulesByTheUnwrappedModule(t *testing.T) {
 	t.Parallel()
 
 	inner := new(tryModuleOk)
