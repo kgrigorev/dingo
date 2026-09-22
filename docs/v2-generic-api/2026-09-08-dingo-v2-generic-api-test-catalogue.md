@@ -186,7 +186,7 @@ The panic itself, the sentinel, the message shape.
 | `TestGetAnnotatedInstance_MapPrefixIsASpecialLookup` | a singular binding annotated exactly `"map:k"` wins over the map-binding entry `k`: the exact-annotation match runs first (`dingo.go:240-247`), the `map:` lookup second | G-03 | (decision) the earlier catalogue stated this order backwards; reproduced 2026-09-14 |
 | `TestGetAnnotatedInstance_MapPrefixIsASpecialLookup` | the annotation `"map:"` alone (four characters) is not a map lookup and resolves like any other unbound annotation | G-03 | (decision) `len(annotation) > 4` guard; public-API footgun documented in the README |
 | `TestGetInstance_PointerToInterfaceReturnsWrappedError` | `GetInstance[*Iface]()` returns an error wrapping the exported `ErrPointerToInterface` | G-04 | (decision) new plumbing, not a port of v0 behavior |
-| `TestGetInstance_PointerToPointerReturnsWrappedError` | `GetInstance[**T]()` and `GetAnnotatedInstance[**T](a)` return an error wrapping `ErrInvalidBinding`, no resolution | G-05 | (decision) the engine's `reflect.Type` path would strip one level and resolve `*T`; the request-side twin of B-03 |
+| `TestGetInstance_PointerToPointerReturnsWrappedError` | `GetInstance[**T]()` and `GetAnnotatedInstance[**T](a)` return an error wrapping `ErrInvalidBinding`, no resolution | G-05 | (decision) the engine's `reflect.Type` path for `**T` panics inside `requestInjection`; G-05 turns that panic into a clean error; the request-side twin of B-03 |
 | `TestBind_DirectSliceBindingWinsOverMultibinding` | a direct `Bind[[]X]()` wins over `BindMulti[X]()` at the same injection site | K-10 | (decision) precedence between two binding mechanisms |
 | `TestBind_DirectMapBindingWinsOverBindMap` | a direct `Bind[map[string]X]()` wins over `BindMap[X](...)` at the same injection site | K-11 | (decision) precedence between two binding mechanisms |
 | `TestBind_DirectProviderTypeBindingWinsOverGeneration` | a direct `Bind[XProvider]().ToInstance(fn)` wins over the auto-generated provider for `XProvider` at the same injection site | K-12 | (decision) bindings are consulted (`dingo.go:348`) before the `Provider`-suffix rule (`:361`) |
@@ -436,7 +436,7 @@ state, stays in the root module's suite. These IDs are excused in `testdata/cata
 the root test as the reason. Two root tests added by the root PR carry no catalogue ID because
 their subject does not exist in the v2 API: `hooks_test.go` `TestUnwrap_StopsOnNilFixedPointAndDepth`
 (the unwrap contract, review decision 15) and `dingo_test.go`
-`TestInitModules_NamesAValueTypedInnerModuleWithoutPanicking` (the pointer guard, review
+`TestInitModules_NamesAValueTypedModuleWithoutPanicking` (the pointer guard, review
 decision 12). The standalone step brings both into v2.
 
 | ID | Root test | Note |
@@ -465,7 +465,7 @@ Statements for the IDs the root suite pins or that are excused, so that every ID
 | ID | Reason | Comment location |
 |---|---|---|
 | R-26 | A tracing-disabled cycle through a `…Provider`-typed self-reference stack-overflows the process instead of returning a catchable panic; a test would crash the test binary, not fail it. | `testdata/catalogue.txt`, the reason on the ID's line |
-| M-08 (add-failure branch) | `ErrInitModules`'s "failed adding modules" branch wraps an error from `mg.Add`, whose only error source is `Depends() []Module`, a signature that cannot itself return an error; the branch is unreachable through the public API. | root `module.go`, `// coverage: unreachable through the public API` above the add-failure branch in `InitModules`, added by the root PR |
+| M-08 (add-failure branch) | `ErrInitModules`'s "failed adding modules" branch wraps an error from `mg.Add`, whose only error source is `Depends() []Module`, a signature that cannot itself return an error; the branch is unreachable through the public API. | root `dingo.go`, `// coverage: unreachable through the public API` above the add-failure branch in `InitModules`, added by the root PR |
 | DUP-03, R-25 | Engine-internal; pinned by the root tests listed under "Pinned in the root module". | `testdata/catalogue.txt`, the reason on each ID's line |
 | I-07 | A data race cannot be asserted: under `-race` it fails the run, without `-race` it is invisible. Stated in the spec and the README; synchronizing the map is a listed follow-up. | `testdata/catalogue.txt`, the reason on the ID's line |
 

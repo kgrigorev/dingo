@@ -35,8 +35,8 @@ release. The v0 reflection API therefore stays as the engine, and v2 is a typed 
 |---|---|---|
 | Delivery | New major `flamingo.me/dingo/v2` as a module in the `v2/` directory of the same repository, first tag `v2.0.0` | Go has no overloading, so `Bind`, `To`, `Binding` and the rest keep their names only in a new major. A separate import path lets v0 and v2 coexist in one build. The subdirectory lets root injector and typed API change in one commit and share private packages. |
 | Architecture | v2 is a generic typed API over the v0 engine. The engine stays in the root module and keeps its behavior; v2 requires the root module | Flamingo v3.17 and 245 module `Configure` implementations, plus eight OSS modules, speak v0. With two separate engines every module in the ecosystem would have to move at once inside a Flamingo major. One shared engine runs v0 and v2 modules on one injector, so the ecosystem migrates a module at a time. Runtime behavior is identical by construction, not by re-implementation. |
-| Bridge | Package `flamingo.me/dingo/v2/compat` adapts injectors and modules both ways. The core package `flamingo.me/dingo/v2` names no v0 identifier | compat can be removed later without touching the v2 core API. |
-| Root changes | Behavior-neutral for every existing v0 call: a private hooks package, an attached slot on `Injector` filled eagerly through hooks.Attach, `moduleKeyOf` and `InitModules` looking through module adapters, a pointer guard on the module type named in `InitModules`' injection error, a shared type-name package, `ErrPointerToInterface` exported, the `ErrModuleSort` cause wrapped, tests added, one renamed (full list under "Root changes"). Released as v0.5.0 before v2 exists | Every existing v0 call takes the same code path as before. The pointer guard is only reachable once modules are wrapped (review decision 12). |
+| Compat | Package `flamingo.me/dingo/v2/compat` adapts injectors and modules both ways. The core package `flamingo.me/dingo/v2` names no v0 identifier | compat can be removed later without touching the v2 core API. |
+| Root changes | Nearly behavior-neutral for existing v0 calls: a private hooks package, an attached slot on `Injector` filled eagerly through hooks.Attach, `moduleKeyOf` and `InitModules` looking through module adapters, a pointer guard on the module type named in `InitModules`' injection error, a shared type-name package, `ErrPointerToInterface` exported, the `ErrModuleSort` cause wrapped, tests added, one renamed (full list under "Root changes"). Released as v0.5.0 before v2 exists | Happy-path v0 calls keep today's code path. Documented carve-outs: pointer-to-interface message; `ErrModuleSort` cause; pointer guard — a real bug fix reachable today via `TryModule(ValueModule{})` (review decision 12; plan verified deviation 2). |
 | Runtime behavior | Identical to v0.4.1 at resolution time, except two error messages: the pointer-to-interface injection error (review decision 3) and the sort error, which gains its cause (review decision 8). Bind-time checks are stricter, and the deliberate tightenings are listed under "Deliberate tightenings against v0" | Fixes that land in the engine reach v2 through a version bump. |
 | Runtime-typed binding targets | `ToType(reflect.Type)` ships in v2.0 as the documented escape hatch for a target chosen at run time (review decision 10) | Flamingo's `web.BindRoutes` and `flamingo.BindTemplateFunc` take a value and bind its dynamic type as the target (`BindMulti(new(RoutesModule)).To(m)`, `BindMap(new(TemplateFunc), name).To(fnc)`); 28 call sites in Flamingo alone, more in commerce and om3. Without `ToType` the helpers would have to change signature for every caller, or switch to `ToInstance`, which skips construction and injection of the target. |
 | Runtime-typed binding keys | None in v2.0 | Only Flamingo's config loop binds a runtime-typed key. It keeps binding through the v0 engine until Flamingo drops v0; the end-state type switch is in the migration guide. A `BindType(reflect.Type)` escape hatch for keys, and a `reflect.Type` form of `GetInstance`, can be added in a 2.x minor without breaking anyone. |
@@ -240,7 +240,8 @@ the unexported-field case. Registration and resolution are unchanged (review dec
 an error wrapping `ErrPointerToInterface`, and a pointer-to-pointer `T` with an error wrapping
 `ErrInvalidBinding`. Both checks are new for this entry point: v0's `GetInstance(new(*Iface))`
 stripped every pointer level and silently resolved `Iface`, and a `reflect.Type` carrier of `**T`
-would have one level stripped and resolve `*T` (review decision 20). Then they hand
+panics inside `requestInjection` (`reflect: call of reflect.Value.Type on zero Value`) rather than
+resolving `*T` (review decision 20; plan verified deviation 1). Then they hand
 `reflect.TypeFor[T]()` to the engine, which strips one pointer level and resolves the key as it
 does for a struct field of type `T`, and adapt the result to `T`: dereference while the value is
 a pointer and not assignable to `T`, take the address of a copy when `T` is a pointer and the
@@ -299,7 +300,7 @@ in `ErrInitModules`, so `errors.Is(err, ErrInitModules)` is false for it. Kept a
   commerce and om3 do the same (not counted). Both shapes are pinned. When injection fails,
   `InitModules` returns the engine's `initmodules: injection into %q failed` error, naming the
   unwrapped module's type, and `Configure` does not run. `TryModule` of either package returns
-  it. The innermost module may be a value (`MyModule{}`, a `ModuleFunc`), so the root's type
+  it. The unwrapped module may be a value (`MyModule{}`, a `ModuleFunc`), so the root's type
   naming in that error is pointer-guarded (see "Root changes").
 - Bindings, multibindings, map bindings, scopes and interceptors made through either API are
   visible to both. `Singleton` and `ChildSingleton` are the same scope objects in both packages,
@@ -330,8 +331,8 @@ These are bind-time rejections of calls v0 accepted. Each is listed in the migra
   nothing reads (see "The type parameter T").
 - `BindInterceptor` with an unexported field 0: v0 registered it and panicked at first
   resolution. v2 rejects it at bind time.
-- `GetInstance[**T]`: v0's `reflect.Type` path would strip one level and resolve `*T`. v2
-  rejects it.
+- `GetInstance[**T]`: v0's `reflect.Type` path for `**T` panics inside `requestInjection`
+  rather than resolving `*T`. v2 rejects it with a clean error.
 - The checks already listed above: pointer to interface and pointer to pointer as `T`, self
   binding, a second target, conflicting annotation or scope, nil scope, nil instance.
 
@@ -550,8 +551,9 @@ configured.
 
 ### Root changes
 
-All of them leave every existing v0 call on its current code path. One of them, the pointer guard,
-changes what happens on a path that only wrapped modules reach.
+All of them leave every existing happy-path v0 call on its current code path. One of them, the
+pointer guard, fixes a panic reachable today through the public API (`TryModule(ValueModule{})`)
+as well as through wrapped modules.
 
 - `internal/hooks` as above. The root's `init` installs `Attached`.
 - `Injector` gets an unexported slot for the typed injector. `NewInjector` fills it through
@@ -1370,23 +1372,26 @@ not lose it.
 
 1. Root PR, dingo branch `feat/v2-naming-hooks-root` from `master`: `internal/hooks` with
    `DingoUnwrap`, `Unwrap` and its stop conditions, `internal/typename`, the typed injector
-   slot filled eagerly in `NewInjector` and `Child`, `moduleKeyOf` and `InitModules` looking
-   through adapters, the pointer guard on `InitModules`' injection error, `ErrPointerToInterface`,
-   the wrapped `ErrModuleSort` cause, the tracing test, the `Unwrap` test, the pointer-guard
-   test, the `TestDingoCircula` rename, the `// coverage:` comments on `InitModules`' add-failure
-   branch and on the sort fallback. Conventional commit `feat:`; semanticore releases it as
-   `v0.5.0`. Draft PR against `master`, no reviewers assigned; body: what the hooks package is for, the
-   behavior-neutral claim for existing calls and how it was checked, and the one guarded path
-   that only wrapped modules reach.
-2. v2 PR, dingo branch `feat/v2-generic-api` from `master` after `v0.5.0` is on the proxy: the
-   `v2/` module requiring `v0.5.0`, `go.work`, the workflow changes including the PR-advisory
-   `tests-v2-published` job, the semanticore guard, the root README notice, `v2/README.md`.
-   Gating step before the PR leaves draft: run the workflow's pinned golangci-lint version over
-   a file with generic methods and confirm it reports findings rather than refusing the Go
-   version. Draft PR against `master`, no reviewers assigned; body: summary, the migration table,
-   the deliberate tightenings, the compat lifetime, the manual `v2.0.0` tag step with
-   `[skip release]` in the squash commit. The main commit carries a `BREAKING CHANGE:` footer
-   line describing the API, for the changelog.
+   slot filled eagerly in `NewInjector` only (`Child` attaches because it calls `NewInjector`),
+   `moduleKeyOf` and `InitModules` looking through adapters, the pointer guard on `InitModules`'
+   injection error, `ErrPointerToInterface`, the wrapped `ErrModuleSort` cause, the tracing test,
+   the `Unwrap` test, the pointer-guard test, the `TestDingoCircula` rename, the `// coverage:`
+   comments on `InitModules`' add-failure branch and on the sort fallback. Conventional commit
+   `feat:`; semanticore releases it as `v0.5.0`. Draft PR against `master`, no reviewers assigned;
+   body: what the hooks package is for, the near-behavior-neutral claim for happy-path calls, and
+   the three honest carve-outs (pointer-to-interface message, sort cause, pointer-guard bug fix
+   reachable via `TryModule(ValueModule{})` today).
+2. v2 PR, dingo branch `feat/v2-generic-api` from Part A HEAD (or `master` after Part A merges).
+   Part B is **not** gated on `v0.5.0` at the vanity proxy: commit `go.work` at Part B start with
+   interim `v2/go.mod` requiring `v0.4.1` (inert under workspace; no `replace`); keep
+   `tests-v2-published` advisory until the proxy has `v0.5.0`. Land the `v2/` module, workflow
+   changes, the semanticore guard, the root README notice, `v2/README.md`. Gating step before the
+   PR leaves draft: run the workflow's pinned golangci-lint version over a file with generic
+   methods and confirm it reports findings rather than refusing the Go version. Draft PR against
+   `master`, no reviewers assigned; body: summary, the migration table, the deliberate
+   tightenings, the compat lifetime, the manual `v2.0.0` tag step with `[skip release]` in the
+   squash commit. The main commit carries a `BREAKING CHANGE:` footer line describing the API,
+   for the changelog.
 3. After the v2 merge: tag `v2.0.0` on the merge commit, `gh release create v2.0.0`, then commit
    `v2/coverage.min` with the measured figure. From that commit on the coverage job gates.
    Cut `release/v0.x` from the `v0.5.0` release commit in the same session, so the first root fix
@@ -1417,7 +1422,7 @@ not lose it.
    excluded from the compatibility promise from day one.
 6. 2026-09-09: injection of an adapted module happens in the engine's `InitModules`, which looks
    through adapters with `hooks.Unwrap`. Injection failures take the native error path; no
-   injection hook in the bridge.
+   injection hook in the private contract package.
 7. 2026-09-09: root v0.x releases move to a `release/v0.x` maintenance branch once `v2.0.0`
    exists. Semanticore bases its version on the first tag it meets walking back from HEAD, not on
    the highest tag, so a root tag on master would take the automatic stream back to v0. See
@@ -1444,16 +1449,18 @@ not lose it.
     possible on the typed injector side, since an `Override` may precede the `Bind` it targets in another
     module.
 12. 2026-09-14: the root PR pointer-guards the module type named in `InitModules`' injection
-    error. `reflect.TypeOf(module).Elem()` is unconditional today and panics for a value-typed
-    module once `Unwrap` is in front of it. Listed as a root change, pinned by a root test;
-    X-19 depends on it.
+    error. `reflect.TypeOf(module).Elem()` is unconditional today and already panics for an
+    unwrapped value-typed module (`TryModule(ValueModule{})`); `Unwrap` would also make the same
+    panic reachable for every adapted value module. Listed as a root change / bug fix, pinned by
+    a root test covering both unwrapped and wrapped cases; X-19 depends on it.
 13. 2026-09-14: `BindInterceptor[T, I]` rejects an unexported field 0 at bind time (B-34a). The
     engine's `Set` on field 0 panics for it, and the suite's lowercase-fixture rule would have
     produced exactly that shape. Interceptor fixtures export field 0.
-14. 2026-09-14: the typed injector is attached eagerly in the root's `NewInjector` and `Child` through
-    hooks.Attach, never lazily. Lazy creation would write the unsynchronized binding map from
-    `compat.Injector` or `Inspect` while resolutions read it. Consequence: the `v2.Injector`
-    self-binding appears in `Inspect` output as soon as v2 is linked.
+14. 2026-09-14: the typed injector is attached eagerly in the root's `NewInjector` through
+    hooks.Attach, never lazily. `Child` must not call `Attach` again: it builds through
+    `NewInjector`, which already attaches once. Lazy creation would write the unsynchronized
+    binding map from `compat.Injector` or `Inspect` while resolutions read it. Consequence: the
+    `v2.Injector` self-binding appears in `Inspect` output as soon as v2 is linked.
 15. 2026-09-14: the hooks package's unwrap method is `DingoUnwrap() any`, `Unwrap` stops on
     nil, on a fixed point and at a depth cap, and a root test pins it. The unprefixed name was a
     structural interface any third-party module could match by accident, and a nil return would
@@ -1472,8 +1479,9 @@ not lose it.
     second result, a nil function) are accepted and listed under "Deliberate tightenings against
     v0" and in the migration guide. They were unlisted behavior changes before.
 20. 2026-09-14: `GetInstance[**T]` and `GetAnnotatedInstance[**T]` return an error wrapping
-    `ErrInvalidBinding` (G-05). The engine's `reflect.Type` path strips one level and would have
-    resolved `*T`.
+    `ErrInvalidBinding` (G-05). The engine's `reflect.Type` path for `**T` panics inside
+    `requestInjection` (`reflect: call of reflect.Value.Type on zero Value`); G-05 turns that
+    panic into a clean error.
 21. 2026-09-14: every catalogue ID carries a statement in `testdata/catalogue.txt`
     (`ID<TAB>statement`); the gate rejects an ID without one. K-08, K-09, I-04, R-25, R-26, R-27
     and DUP-03 had no definition anywhere, and the gate only checked that the ID string appeared

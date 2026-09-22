@@ -34,7 +34,10 @@ Copied from the spec. Every task's requirements implicitly include this section.
 
 ## Verified deviations from the spec
 
-Each was reproduced against the engine at `master` (`60930dd`) on 2026-09-14 with a throwaway module using `replace flamingo.me/dingo => .`. The spec's **decisions** stand in all three cases; only its **rationale** is corrected, and the PR body must say so rather than repeat a claim that is false.
+Each was reproduced against the engine at `master` tip as of 2026-09-14 (the SHA recorded in
+early drafts was not a commit on this repository's history) with a throwaway module using
+`replace flamingo.me/dingo => .`. The spec's **decisions** stand in all three cases; only its
+**rationale** is corrected, and the PR body must say so rather than repeat a claim that is false.
 
 1. **`GetInstance[**T]` panics in v0, it does not silently resolve `*T`.** The spec (review decision 20) says the `reflect.Type` path "would strip one level and resolve `*T`". What actually happens: `getInstanceOfTypeWithAnnotation` strips one level to `*Service`, `createInstanceOfAnnotatedType` does `reflect.New(*Service)` and `requestInjection` walks `**Service` → `*Service` (nil) → `Elem()` of a nil pointer → a zero `reflect.Value` → `panic: reflect: call of reflect.Value.Type on zero Value` at `dingo.go:724`. G-05 therefore turns a **panic** into a clean error, which is a stronger reason for the check, and its `Catches:` line must say so.
 
@@ -99,7 +102,7 @@ During the interim:
 | `internal/hooks/hooks_test.go` | `TestUnwrap_StopsOnNilFixedPointAndDepth` | create |
 | `dingo.go` | `ErrPointerToInterface`; the `attached` slot; `attach`; `InitModules` injecting `hooks.Unwrap(module)` with the pointer-guarded name; the `// coverage:` comment on the add-failure branch; `init` installing `hooks.Attached` | modify |
 | `module.go` | `moduleKeyOf` through `Unwrap`; `qualifiedTypeName` delegating to `typename.Qualified`; the wrapped `ErrModuleSort` cause with its `// coverage:` comment | modify |
-| `dingo_test.go` | four added tests (sentinel, typed-API attachment, pointer guard, innermost injection) | modify (add only) |
+| `dingo_test.go` | four added tests (sentinel, typed-API attachment, pointer guard, unwrapped-module injection) | modify (add only) |
 | `module_test.go` | `TestModuleKeyOf_KeysWrappedModulesByTheUnwrappedModule` | modify (add only) |
 | `tracing_test.go` | `TestInjectionTracing_LogsFieldSetsAndResolutionsWhenEnabled` (package `dingo`) | create |
 | `circular_test.go` | rename `TestDingoCircula` → `TestDingoCircular` | modify |
@@ -135,6 +138,13 @@ During the interim:
 ---
 
 # Part A — the root PR (`feat/v2-naming-hooks-root`)
+
+> **Landed on fork `v2` (do not re-execute A0–A8).** Part A is already on
+> `kgrigorev/dingo` branch `v2` as of tip `20f2e0d`: root bridge work in PRs that landed as
+> `cb9854f` / `4e11736` / `d31f060`, then Phase 0.5 naming freeze + docs alignment as
+> [PR #11](https://github.com/kgrigorev/dingo/pull/11) (`20f2e0d`). The per-task checkboxes and
+> commit mandates below remain as the historical execution script; treat them as done, not as
+> work to redo. Part B starts from current `v2` HEAD (or an equivalent renamed Part A HEAD).
 
 - [ ] **Task A0: branch**
 
@@ -177,8 +187,8 @@ type named struct{}
 
 type namedIface interface{ M() }
 
-// TestQualified_PrintsFullImportPaths pins the printer shared by the engine's module diagnostics
-// and the typed API's bind-time messages.
+// TestQualified_PrintsFullImportPaths pins the printer shared by the root injector's module
+// diagnostics and the typed API's bind-time messages.
 // Catches: a printer that falls back to reflect.Type.String for named types, which would make two
 // same-named types from different packages indistinguishable in an error message.
 func TestQualified_PrintsFullImportPaths(t *testing.T) {
@@ -228,9 +238,10 @@ Expected: FAIL — the package `flamingo.me/dingo/internal/typename` does not ex
 ```go
 // Package typename prints reflect types with their full import path.
 //
-// It is shared by the engine (module graph diagnostics) and the typed API (bind-time messages),
-// so that both name a type the same way. It is internal: Go's internal rule is import-path
-// based, so flamingo.me/dingo/v2 may import it while nothing outside this repository can.
+// It is shared by the root injector (module graph diagnostics) and the typed API (bind-time
+// messages), so that both name a type the same way. It is internal: Go's internal rule is
+// import-path based, so flamingo.me/dingo/v2 may import it while nothing outside this repository
+// can.
 package typename
 
 import (
@@ -351,8 +362,8 @@ type funcWrapper struct{ inner any }
 
 func (f funcWrapper) DingoUnwrap() any { return f.inner }
 
-// TestUnwrap_StopsOnNilFixedPointAndDepth pins the unwrap contract the engine keys its module
-// graph on.
+// TestUnwrap_StopsOnNilFixedPointAndDepth pins the unwrap contract the root injector keys its
+// module graph on.
 // Catches: a nil-returning adapter collapsing every wrapped module onto one nil key so that only
 // the first is configured; a self-returning adapter looping forever; two distinct wrapped modules
 // becoming one; and a comparability panic when the wrapped value is a function.
@@ -523,7 +534,7 @@ var (
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `go test ./internal/hooks/ -v`
-Expected: PASS, ten subtests.
+Expected: PASS, nine subtests.
 
 - [ ] **Step 5: Lint the new package**
 
@@ -668,11 +679,11 @@ Append to `dingo_test.go` (package `dingo`). It installs a process-wide hook, so
 
 ```go
 // TestNewInjector_AttachesEagerlyAndExactlyOnce pins eager attachment: the hook runs
-// inside construction, the slot is readable through hooks.Attached, the typed injector is bound into the
-// engine, and a child gets exactly one typed injector of its own.
-// Catches: a lazily created typed injector writing the unsynchronized binding map after InitModules while
-// resolutions read it; and a second attachment in Child, which would append an unequal duplicate
-// binding for the typed injector key and make the child's next InitModules fail.
+// inside construction, the slot is readable through hooks.Attached, the typed injector is bound
+// into the root injector, and a child gets exactly one attached injector of its own.
+// Catches: a lazily created typed injector writing the unsynchronized binding map after
+// InitModules while resolutions read it; and a second attachment in Child, which would append an
+// unequal duplicate binding for the attached key and make the child's next InitModules fail.
 //
 //nolint:paralleltest // installs a process-wide hooks.Attach for its duration
 func TestNewInjector_AttachesEagerlyAndExactlyOnce(t *testing.T) {
@@ -709,14 +720,14 @@ func TestNewInjector_AttachesEagerlyAndExactlyOnce(t *testing.T) {
 
 	child, err := injector.Child()
 	require.NoError(t, err)
-	require.Len(t, created, 2, "Child attaches exactly one typed injector, through the NewInjector it calls")
+	require.Len(t, created, 2, "Child attaches exactly once, through the NewInjector it calls")
 
 	childAttached, ok := hooks.Attached(child).(*fakeAttached)
 	require.True(t, ok)
 	assert.Same(t, child, childAttached.root)
 	assert.NotSame(t, attached, childAttached)
 
-	// the child holds exactly one binding for the typed injector key, so a later InitModules on it (what
+	// the child holds exactly one binding for the attached key, so a later InitModules on it (what
 	// Flamingo does per config area) does not hit the duplicate-binding check
 	bindings := 0
 
@@ -791,7 +802,7 @@ Add the slot to the struct:
 		stage                uint                                 // current stage
 		delayed              []interface{}                        // delayed bindings
 		buildEagerSingletons bool                                 // whether to build singletons
-		attached             any                                  // the typed API, attached by hooks.Attach; nil when v2 is not linked
+		attached             any                                  // the typed injector, attached by hooks.Attach; nil when v2 is not linked
 	}
 ```
 
@@ -802,7 +813,7 @@ In `NewInjector`, between the scope bindings and the `InitModules` call:
 	injector.BindScope(Singleton)
 	injector.BindScope(ChildSingleton)
 
-	// attach the typed API, when the v2 package is linked into the binary
+	// attach the typed injector when the v2 package is linked into the binary
 	injector.attach()
 
 	// init current modules
@@ -812,14 +823,14 @@ In `NewInjector`, between the scope bindings and the `InitModules` call:
 `Child` is **not** changed: it calls `NewInjector` (`dingo.go:95`), which attaches the child's typed injector. Add the method next to `Child`:
 
 ```go
-// attach fills the attached slot through hooks.Attach when the v2 package is linked. It
+// attach fills the attached slot through the hooks package when the v2 package is linked. It
 // runs inside NewInjector, before any module, so the binding the hook adds never races a
 // resolution; a lazily created typed injector would write the unsynchronized binding map from
 // compat.Injector or Inspect while resolutions read it.
 //
-// It is idempotent by design: Child() builds its engine with NewInjector, so a child is attached
-// there and exactly once. A second attachment would bind a second, unequal typed injector for the same
-// key and break the child's next InitModules.
+// It is idempotent by design: Child() builds its root injector with NewInjector, so a child is
+// attached there and exactly once. A second attachment would bind a second, unequal typed
+// injector for the same key and break the child's next InitModules.
 func (injector *Injector) attach() {
 	if injector.attached != nil || hooks.Attach == nil {
 		return
@@ -861,7 +872,7 @@ Append to `dingo_test.go` (package `dingo`):
 
 ```go
 // wrappedModule is a minimal module adapter: it implements hooks.Unwrapper structurally and
-// forwards nothing else, so the engine's Unwrap path is what these tests exercise.
+// forwards nothing else, so the root injector's Unwrap path is what these tests exercise.
 type wrappedModule struct{ inner any }
 
 func (w *wrappedModule) Configure(*Injector) {}
@@ -910,11 +921,11 @@ func TestInitModules_NamesAValueTypedModuleWithoutPanicking(t *testing.T) {
 	}
 }
 
-// TestInitModules_InjectsTheUnwrappedpedModule pins that a wrapped module's fields are set before
+// TestInitModules_InjectsTheUnwrappedModule pins that a wrapped module's fields are set before
 // Configure, on the inner value rather than on the adapter.
 // Catches: an adapter being injected instead of the module it wraps, which leaves every adapted
 // module's dependencies nil inside Configure.
-func TestInitModules_InjectsTheUnwrappedpedModule(t *testing.T) {
+func TestInitModules_InjectsTheUnwrappedModule(t *testing.T) {
 	t.Parallel()
 
 	injector, err := NewInjector()
@@ -961,7 +972,7 @@ func TestModuleKeyOf_KeysWrappedModulesByTheUnwrappedModule(t *testing.T) {
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `go test -run 'TestInitModules_NamesAValueTyped|TestInitModules_InjectsTheUnwrapped|TestModuleKeyOf_KeysWrappedModulesByTheUnwrapped' -v .`
-Expected: the guard test FAILS on both subtests (`NotPanics` reports `reflect: Elem of invalid type flamingo.me/dingo.valueModuleWithUnresolvableField`); the innermost-injection test FAILS because `Dependency` is nil (the adapter was injected); the key test FAILS on the first `assert.Equal`.
+Expected: the guard test FAILS on both subtests (`NotPanics` reports `reflect: Elem of invalid type flamingo.me/dingo.valueModuleWithUnresolvableField`); the unwrapped-injection test FAILS because `Dependency` is nil (the adapter was injected); the key test FAILS on the first `assert.Equal`.
 
 - [ ] **Step 3: Write the implementation**
 
@@ -1035,7 +1046,7 @@ Note for the reviewer, to carry into the PR body: an unwrapped **anonymous** poi
 
 ```bash
 git add module.go dingo.go dingo_test.go module_test.go
-git commit -m "feat: key and inject modules by their innermost module, guard the type name in InitModules"
+git commit -m "feat: key and inject modules by their unwrapped module, guard the type name in InitModules"
 ```
 
 ### Task A7: injection tracing test and the circular test rename
