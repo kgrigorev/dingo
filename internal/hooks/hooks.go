@@ -1,25 +1,30 @@
-// Package hooks is the private contract between the root injector (flamingo.me/dingo) and the
-// typed API (flamingo.me/dingo/v2). It lives under internal/, so only this repository can import
-// it (including the v2 module).
+// Package hooks is a private link between flamingo.me/dingo (the root injector)
+// and flamingo.me/dingo/v2 (the typed API). Only this repository can import it.
 //
-// Values are typed as any to avoid an import cycle; each side asserts its own types.
+// Values use any so the two packages do not import each other.
+// Each side casts to its own types.
 package hooks
 
 import "reflect"
 
-// Unwrapper marks a module adapter. The root injector builds the module graph from the inner
-// (unwrapped) module. The Dingo-prefixed method name avoids colliding with unrelated Unwrap methods.
+// Unwrapper is for module adapters.
+// The root injector keys the module graph by the inner module, not the adapter.
+// The method is named DingoUnwrap so unrelated Unwrap methods are ignored.
 type Unwrapper interface {
 	DingoUnwrap() any
 }
 
-// MaxUnwrapDepth is the maximum Unwrap recursion. Real nesting stops at two layers
-// (ToRoot(FromRoot(m))); the higher cap stops a self-returning adapter from looping forever.
+// MaxUnwrapDepth limits how far Unwrap walks.
+// Real use needs at most two layers: ToRoot(FromRoot(m)).
+// The higher number stops a broken adapter that returns itself from looping forever.
 const MaxUnwrapDepth = 8
 
-// Unwrap walks DingoUnwrap until the value is not an Unwrapper, returns nil, returns itself, or
-// MaxUnwrapDepth is hit. On nil, Unwrap keeps the last non-nil value so a broken adapter does not
-// share one nil key with every other broken adapter.
+// Unwrap keeps calling DingoUnwrap to find the inner module.
+// It stops when the value is not an Unwrapper, when DingoUnwrap returns nil,
+// when it returns itself, or when MaxUnwrapDepth is reached.
+//
+// A nil return keeps the last non-nil value.
+// That way broken adapters do not all collapse onto one nil key.
 func Unwrap(module any) any {
 	current := module
 
@@ -40,9 +45,11 @@ func Unwrap(module any) any {
 	return current
 }
 
-// same reports whether left and right are the same value. It checks reflect.Value.Comparable, not
-// Type.Comparable: a struct type with an interface field can be a comparable type, yet a value that
-// holds a function is not a comparable value — plain == would panic. ModuleFunc adapters have that shape.
+// same is true when left and right are the same value.
+// We use reflect.Value.Comparable, not Type.Comparable.
+// A struct type with an interface field can look comparable as a type,
+// but a value that holds a function is not comparable — == would panic.
+// ModuleFunc adapters look like that.
 func same(left, right any) bool {
 	value := reflect.ValueOf(left)
 	if !value.IsValid() || !value.Comparable() || value.Type() != reflect.TypeOf(right) {
@@ -52,17 +59,19 @@ func same(left, right any) bool {
 	return left == right
 }
 
-// Attached returns the typed injector on a root injector, or nil if none.
-// Set by flamingo.me/dingo in an init function.
+// Attached returns the typed injector stored on a root injector.
+// It returns nil if nothing was attached.
+// flamingo.me/dingo sets this in init.
 var Attached func(root any) any
 
-// Set by flamingo.me/dingo/v2 in an init function. Nil when v2 is not linked, so Attach does nothing.
+// flamingo.me/dingo/v2 sets these in init.
+// They stay nil until v2 is linked, so Attach does nothing in a root-only binary.
 var (
-	// Attach builds the typed injector for a root injector and binds it there. NewInjector calls
-	// it during construction, before any module runs.
+	// Attach creates the typed injector and binds it into the root.
+	// NewInjector calls it while building the injector, before any module runs.
 	Attach func(root any) any
-	// RootOf returns the root injector behind a typed injector.
+	// RootOf returns the root injector for a typed injector.
 	RootOf func(attached any) any
-	// AsModule wraps a v2 module as a root Module.
+	// AsModule wraps a v2 module so the root injector can load it.
 	AsModule func(module any) any
 )

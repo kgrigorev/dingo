@@ -16,9 +16,9 @@ type tracedTarget struct {
 	Dependency *tracedDependency `inject:""`
 }
 
-// TestInjectionTracing_LogsFieldSetsAndResolutionsWhenEnabled pins R-27: with the switch on, the
-// engine logs one slog line per field set ("SETTING FIELD") and per resolution ("INJECTING").
-// Catches: reading the switch but never logging, so graph debugging stays silent.
+// TestInjectionTracing_LogsFieldSetsAndResolutionsWhenEnabled checks R-27.
+// With the switch on, each field set and each resolution logs one slog line.
+// If the switch is only read and never used, debugging stays silent.
 //
 //nolint:paralleltest // swaps the process-wide slog default and the package-level tracing switch
 func TestInjectionTracing_LogsFieldSetsAndResolutionsWhenEnabled(t *testing.T) {

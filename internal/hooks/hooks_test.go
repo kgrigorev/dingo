@@ -9,24 +9,25 @@ import (
 
 type leaf struct{ name string }
 
-// wrapper returns its inner value; nil inner models a broken adapter.
+// wrapper returns its inner value. A nil inner is a broken adapter.
 type wrapper struct{ inner any }
 
 func (w *wrapper) DingoUnwrap() any { return w.inner }
 
-// selfWrapper returns itself (fixed point).
+// selfWrapper returns itself.
 type selfWrapper struct{}
 
 func (s *selfWrapper) DingoUnwrap() any { return s }
 
-// funcWrapper wraps an uncomparable value, like a v2 ModuleFunc adapter.
+// funcWrapper holds a function value, like a v2 ModuleFunc adapter.
 type funcWrapper struct{ inner any }
 
 func (f funcWrapper) DingoUnwrap() any { return f.inner }
 
-// TestUnwrap_StopsOnNilFixedPointAndDepth pins the Unwrap rules the root module graph keys on.
-// Catches: nil-returning adapters all mapping to one nil key; self-returning adapters looping;
-// distinct wrapped modules becoming one; comparability panic when the wrapped value is a function.
+// TestUnwrap_StopsOnNilFixedPointAndDepth checks the Unwrap rules used for module keys.
+//
+// Without them: nil adapters share one key; self-wrappers loop;
+// two wrapped modules look like one; function values panic on ==.
 func TestUnwrap_StopsOnNilFixedPointAndDepth(t *testing.T) {
 	t.Parallel()
 

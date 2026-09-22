@@ -1,7 +1,7 @@
-// Package typename formats reflect types with their full import path.
+// Package typename prints a reflect type with its full import path.
 //
-// The root injector (module graph errors) and the typed API (bind-time messages) share it so both
-// print the same type name. It is under internal/, so only this repository can import it.
+// Root module errors and typed-API bind errors both use this, so names match.
+// Only this repository can import it (internal/).
 package typename
 
 import (
@@ -9,16 +9,15 @@ import (
 	"reflect"
 )
 
-// Qualified is like reflect.Type.String, but named types use the full import path instead of the
-// short package name. Pointer, slice, array, map, and channel types are walked so named parts
-// inside them are fully qualified too. Anonymous structs, interfaces, funcs, and anything else
-// fall back to reflect.Type.String.
+// Qualified is like reflect.Type.String, but named types show the full import path.
+// It also walks pointers, slices, arrays, maps, and channels.
+// Struct, interface, and func types without a name fall back to Type.String.
 func Qualified(typ reflect.Type) string {
 	if typ.PkgPath() != "" {
 		return typ.PkgPath() + "." + typ.Name()
 	}
 
-	//nolint:exhaustive // only kinds that can wrap a named type are qualified; others use reflect.Type.String
+	//nolint:exhaustive // only kinds that wrap a named type get a full path; others use Type.String
 	switch typ.Kind() {
 	case reflect.Pointer:
 		return "*" + Qualified(typ.Elem())

@@ -12,9 +12,9 @@ type named struct{}
 
 type namedIface interface{ M() }
 
-// TestQualified_PrintsFullImportPaths pins the shared type printer used by root module errors and
-// typed-API bind messages.
-// Catches: falling back to reflect.Type.String for named types, which would hide package differences.
+// TestQualified_PrintsFullImportPaths checks that named types show the full import path.
+// Root errors and typed-API messages share this printer.
+// Falling back to Type.String would hide which package a type came from.
 func TestQualified_PrintsFullImportPaths(t *testing.T) {
 	t.Parallel()
 

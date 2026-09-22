@@ -344,8 +344,8 @@ type someStructWithInvalidInterfacePointer struct {
 	A *testInterface `inject:""`
 }
 
-// TestInjectionOfInterfacePointer pins rejection of pointer-to-interface fields, the exported
-// ErrPointerToInterface sentinel (errors.Is for the typed API), and the error message text.
+// TestInjectionOfInterfacePointer checks that pointer-to-interface fields are rejected.
+// It also checks ErrPointerToInterface (for errors.Is in the typed API) and the message text.
 func TestInjectionOfInterfacePointer(t *testing.T) {
 	t.Parallel()
 
@@ -359,11 +359,14 @@ func TestInjectionOfInterfacePointer(t *testing.T) {
 	assert.ErrorContains(t, err, "pointer to interface is not allowed")
 }
 
-// TestNewInjector_AttachesEagerlyAndExactlyOnce pins that Attach runs during NewInjector, that
-// hooks.Attached can read the slot, that the typed injector is bound on the root, and that a child
-// gets exactly one attached injector.
-// Catches: lazy attach racing the binding map after InitModules; a second Attach in Child adding a
-// duplicate binding and failing the child's next InitModules.
+// TestNewInjector_AttachesEagerlyAndExactlyOnce checks eager attach.
+// Attach must run inside NewInjector.
+// hooks.Attached must see the slot.
+// The typed injector must be bound on the root.
+// A child must get exactly one attached injector of its own.
+//
+// Without this, a lazy attach can race on the binding map.
+// Attaching twice in Child would add a duplicate binding and fail InitModules.
 //
 //nolint:paralleltest // installs a process-wide hooks.Attach for the duration of the test
 func TestNewInjector_AttachesEagerlyAndExactlyOnce(t *testing.T) {
@@ -407,7 +410,7 @@ func TestNewInjector_AttachesEagerlyAndExactlyOnce(t *testing.T) {
 	assert.Same(t, child, childAttached.root)
 	assert.NotSame(t, attached, childAttached)
 
-	// one binding for the attached key — Flamingo calls InitModules per config area and must not hit duplicates
+	// Flamingo calls InitModules again on children. There must be only one binding for this key.
 	bindings := 0
 
 	child.Inspect(Inspector{InspectBinding: func(of reflect.Type, _ string, _ reflect.Type, _, _ *reflect.Value, _ Scope) {
@@ -423,25 +426,27 @@ func TestNewInjector_AttachesEagerlyAndExactlyOnce(t *testing.T) {
 	assert.Nil(t, hooks.Attached("not a root injector"))
 }
 
-// wrappedModule is a minimal Unwrapper adapter; tests use it to exercise the root Unwrap path.
+// wrappedModule is a tiny Unwrapper used by these tests.
 type wrappedModule struct{ inner any }
 
 func (w *wrappedModule) Configure(*Injector) {}
 
 func (w *wrappedModule) DingoUnwrap() any { return w.inner }
 
-// valueModuleWithUnresolvableField is a value module with an unbound inject field, so InitModules
-// fails before fields are set. Naming that module with reflect.Type.Elem() panics on a non-pointer.
+// valueModuleWithUnresolvableField is a value (not pointer) module with a missing inject field.
+// InitModules fails before fields are set.
+// Calling Type.Elem() on it would panic — that is what we guard against.
 type valueModuleWithUnresolvableField struct {
 	Missing testInterface `inject:"nobody-binds-this"`
 }
 
 func (valueModuleWithUnresolvableField) Configure(*Injector) {}
 
-// TestInitModules_NamesAValueTypedModuleWithoutPanicking pins the pointer guard when naming the
-// module in an InitModules injection error (review decision 12).
-// Catches: Type.Elem() on a value module panicking ("reflect: Elem of invalid type"), turning a
-// normal error into a panic — and Unwrap would make that path reachable for every adapted value module.
+// TestInitModules_NamesAValueTypedModuleWithoutPanicking checks the pointer guard
+// when InitModules names a module in an error (review decision 12).
+//
+// Without the guard, Type.Elem() panics on a value module.
+// Unwrap would make that path common for adapted value modules.
 func TestInitModules_NamesAValueTypedModuleWithoutPanicking(t *testing.T) {
 	t.Parallel()
 
@@ -470,9 +475,9 @@ func TestInitModules_NamesAValueTypedModuleWithoutPanicking(t *testing.T) {
 	}
 }
 
-// TestInitModules_InjectsTheUnwrappedModule pins that wrapped modules get fields injected on the
-// inner value before Configure, not on the adapter.
-// Catches: injecting the adapter instead, which leaves adapted modules' dependencies nil in Configure.
+// TestInitModules_InjectsTheUnwrappedModule checks that we inject the inner module,
+// not the adapter, before Configure.
+// Injecting the adapter would leave dependencies nil.
 func TestInitModules_InjectsTheUnwrappedModule(t *testing.T) {
 	t.Parallel()
 

@@ -326,9 +326,11 @@ func TestWithInjector(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// TestModuleKeyOf_KeysWrappedModulesByTheUnwrappedModule pins that adapters share the inner module's key.
-// Catches: keying by the adapter type (all adapted modules become one graph node); keying a wrapped
-// ModuleFunc by type alone (distinct closures merge).
+// TestModuleKeyOf_KeysWrappedModulesByTheUnwrappedModule checks that adapters
+// share the inner module's key.
+//
+// Keying by the adapter type would merge all adapted modules into one graph node.
+// Keying a wrapped ModuleFunc by type alone would merge distinct closures.
 func TestModuleKeyOf_KeysWrappedModulesByTheUnwrappedModule(t *testing.T) {
 	t.Parallel()
 
@@ -341,7 +343,7 @@ func TestModuleKeyOf_KeysWrappedModulesByTheUnwrappedModule(t *testing.T) {
 	assert.Equal(t, moduleKeyOf(first), moduleKeyOf(&wrappedModule{inner: first}))
 	assert.NotEqual(t, moduleKeyOf(&wrappedModule{inner: first}), moduleKeyOf(&wrappedModule{inner: second}))
 
-	// a non-root function (v2 ModuleFunc shape) is keyed by value
+	// a function that is not a root Module (v2 ModuleFunc shape) is keyed by value
 	foreignFirst, foreignSecond := func(string) {}, func(string) {}
 	assert.NotEqual(t,
 		moduleKeyOf(&wrappedModule{inner: foreignFirst}),
