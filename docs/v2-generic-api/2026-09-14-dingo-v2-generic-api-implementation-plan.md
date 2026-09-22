@@ -42,7 +42,7 @@ Each was reproduced against the engine at `master` (`60930dd`) on 2026-09-14 wit
 
 3. **A second typed injector attached in `Child` would break every Flamingo child area.** `Child()` already calls `NewInjector()` internally (`dingo.go:95`), so a child engine receives its typed injector there. Attaching again in `Child` would append a second, *unequal* binding for the v2 `Injector` key; a later `child.InitModules(...)` — exactly what `framework/config/area.go` does per area — then fails with `already known binding for "…Injector"` (reproduced: two unequal bindings for one key on a child do fail `InitModules`). Attachment is therefore written once, is idempotent, and Task A5 asserts `Child` attaches exactly one typed injector.
 
-Two further engine facts the plan relies on, verified the same way and *not* in conflict with the spec: a provider bound as `ToProvider(func() Service {…})` makes the engine return a `Service` **value** even for `GetInstance(reflect.TypeFor[*Service]())`, so the address-of-a-copy half of `adapt[T]` is load-bearing rather than theoretical; and `reflect.Value.Comparable()` reports `false` for a struct holding a func while `reflect.Type.Comparable()` reports `true`, so `bridge`'s fixed-point check must use the **Value** form or it panics on a wrapped `ModuleFunc`.
+Two further engine facts the plan relies on, verified the same way and *not* in conflict with the spec: a provider bound as `ToProvider(func() Service {…})` makes the engine return a `Service` **value** even for `GetInstance(reflect.TypeFor[*Service]())`, so the address-of-a-copy half of `adapt[T]` is load-bearing rather than theoretical; and `reflect.Value.Comparable()` reports `false` for a struct holding a func while `reflect.Type.Comparable()` reports `true`, so `hooks.Unwrap`'s fixed-point check (`same`) must use the **Value** form or it panics on a wrapped `ModuleFunc`.
 
 ---
 
@@ -359,7 +359,7 @@ func (f funcWrapper) DingoUnwrap() any { return f.inner }
 func TestUnwrap_StopsOnNilFixedPointAndDepth(t *testing.T) {
 	t.Parallel()
 
-	t.Run("an unwrapped value is its own innermost", func(t *testing.T) {
+	t.Run("an unwrapped value is its own result", func(t *testing.T) {
 		t.Parallel()
 
 		module := &leaf{name: "a"}
@@ -456,9 +456,9 @@ package hooks
 
 import "reflect"
 
-// Unwrapper is implemented by module adapters. The engine keys the module graph by the
-// innermost module. The method name carries the Dingo prefix so that a third-party module with an
-// unrelated Unwrapper method is not unwrapped by accident.
+// Unwrapper is implemented by module adapters. The root injector keys the module graph by the
+// unwrapped module. The method name carries the Dingo prefix so that a third-party module with an
+// unrelated DingoUnwrap method is not unwrapped by accident.
 type Unwrapper interface {
 	DingoUnwrap() any
 }
@@ -467,7 +467,7 @@ type Unwrapper interface {
 // (ToRoot(FromRoot(m))); the cap exists so that a self-returning adapter cannot loop.
 const MaxUnwrapDepth = 8
 
-// Unwrap follows DingoUnwrap until a value does not implement it, returns nil, returns
+// Unwrap follows DingoUnwrap until a value does not implement Unwrapper, returns nil, returns
 // itself, or MaxUnwrapDepth is reached. A nil return stops at the last non-nil value, so a broken
 // adapter keeps its own identity instead of collapsing onto the nil key.
 func Unwrap(module any) any {
@@ -511,7 +511,7 @@ var Attached func(root any) any
 // does not link v2 attaches nothing.
 var (
 	// Attach creates the typed injector for a root injector and binds it into the root. The root's
-	// NewInjector calls it, inside the engine's construction, before any module runs.
+	// NewInjector calls it, inside the root injector's construction, before any module runs.
 	Attach func(root any) any
 	// RootOf returns the root injector behind a typed injector.
 	RootOf func(attached any) any
@@ -682,7 +682,7 @@ func TestNewInjector_AttachesEagerlyAndExactlyOnce(t *testing.T) {
 
 	previous := hooks.Attach
 	hooks.Attach = func(root any) any {
-		e, ok := engine.(*Injector)
+		e, ok := root.(*Injector)
 		require.True(t, ok)
 
 		created = append(created, e)
@@ -730,7 +730,7 @@ func TestNewInjector_AttachesEagerlyAndExactlyOnce(t *testing.T) {
 
 	assert.Nil(t, hooks.Attached(nil))
 	assert.Nil(t, hooks.Attached((*Injector)(nil)))
-	assert.Nil(t, hooks.Attached("not an engine"))
+	assert.Nil(t, hooks.Attached("not a root injector"))
 }
 ```
 
@@ -738,7 +738,7 @@ Add `"flamingo.me/dingo/internal/hooks"` and `"reflect"` to `dingo_test.go`'s im
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `go test -run 'TestNewInjector_AttachesTheFacadeEagerly' -v .`
+Run: `go test -run 'TestNewInjector_AttachesEagerly' -v .`
 Expected: FAIL — `hooks.Attached` is a nil func value, so the first `hooks.Attached(injector)` panics.
 
 - [ ] **Step 3: Write the implementation**
@@ -765,7 +765,7 @@ Add the hook installation next to the var block:
 ```go
 func init() {
 	hooks.Attached = func(root any) any {
-		injector, ok := engine.(*Injector)
+		injector, ok := root.(*Injector)
 		if !ok || injector == nil {
 			return nil
 		}
@@ -1151,7 +1151,7 @@ Expected: exactly one addition, `ErrPointerToInterface`. Anything else is a mist
 git push -u origin feat/v2-naming-hooks-root
 ```
 
-Open a **draft** PR against `master`, no reviewers assigned. Title: `feat: bridge and root changes for the typed API`.
+Open a **draft** PR against `master`, no reviewers assigned. Title: `feat: hooks and root changes for the typed API`.
 
 Body sections:
 - *What the hooks package is for* — v2 is a typed injector over this engine; `internal/hooks` is the only coupling; Go's import-path-based internal rule lets the `v2/` module import it while nothing outside the repository can.
@@ -1331,7 +1331,7 @@ git commit -m "feat(v2): add the flamingo.me/dingo/v2 module and the workspace"
 **Interfaces:**
 - Consumes: `hooks.Attached`, `hooks.Attach`, `hooks.RootOf`, `hooks.AsModule` (A2, A5); `v0.Injector`, `v0.Module`, `v0.Scope`, the root sentinels (A3).
 - Produces, and every later Part B task depends on these exact signatures:
-  - `type Injector struct{ root *v0.Injector }` with `func (injector *Injector) mustRoot(call string) *v0.Injector` and `func attachedOf(engine *v0.Injector) *Injector`
+  - `type Injector struct{ root *v0.Injector }` with `func (injector *Injector) mustRoot(call string) *v0.Injector` and `func attachedOf(root *v0.Injector) *Injector`
   - `func NewInjector(modules ...Module) (*Injector, error)`, `func (injector *Injector) Child() (*Injector, error)`, `InitModules(modules ...Module) error`, `SetBuildEagerSingletons(build bool)`, `BuildEagerSingletons(includeParent bool) error`, `RequestInjection(object any) error`, `BindScope(scope Scope)`
   - `func EnableCircularTracing()`, `func EnableInjectionTracing()`
   - `type Module interface{ Configure(injector *Injector) }`, `type ModuleFunc func(injector *Injector)`, `type Depender interface{ Depends() []Module }`, `func TryModule(modules ...Module) error`
@@ -1764,13 +1764,13 @@ import (
 // zeroInjector is the reason every method reports for a zero or nil Injector.
 const zeroInjector = "zero Injector, use NewInjector, Child or compat.Injector"
 
-// Injector defines bindings and multibindings. It is a typed injector over the engine in
+// Injector defines bindings and multibindings. It is a typed injector over the root injector in
 // flamingo.me/dingo; both APIs share one set of bindings, scopes and interceptors.
 //
 // Generic methods cannot appear in an interface, so *Injector can never be abstracted behind
 // one: code that accepts "an injector" takes *Injector directly.
 type Injector struct {
-	engine *v0.Injector
+	root *v0.Injector
 }
 
 // mustRoot returns the root injector, or panics with the zero-value message naming call.
@@ -1782,13 +1782,13 @@ func (injector *Injector) mustRoot(call string) *v0.Injector {
 	return injector.root
 }
 
-// attachedOf returns the typed injector the root attached to engine when it built it.
-func attachedOf(engine *v0.Injector) *Injector {
-	attached, ok := hooks.Attached(engine).(*Injector)
+// attachedOf returns the typed injector the root attached when it built this root injector.
+func attachedOf(root *v0.Injector) *Injector {
+	attached, ok := hooks.Attached(root).(*Injector)
 	if !ok {
 		// coverage: unreachable through the public API; linking this package installs the hook
 		// the root calls in every constructor
-		panic(invalid("Injector", "engine has no typed API"))
+		panic(invalid("Injector", "root injector has no typed API"))
 	}
 
 	return attached
@@ -1902,7 +1902,7 @@ func (f ModuleFunc) Configure(injector *Injector) { f(injector) }
 type asModule struct{ module Module }
 
 // Configure runs the v2 module against the root injector's typed injector.
-func (m asModule) Configure(engine *v0.Injector) { m.module.Configure(attachedOf(engine)) }
+func (m asModule) Configure(root *v0.Injector) { m.module.Configure(attachedOf(root)) }
 
 // Depends adapts the v2 module's dependencies, returning nil when it declares none.
 func (m asModule) Depends() []v0.Module {
@@ -1960,7 +1960,7 @@ func TryModule(modules ...Module) (resultingError error) {
 
 func init() {
 	hooks.Attach = func(root any) any {
-		typed, ok := engine.(*v0.Injector)
+		typed, ok := root.(*v0.Injector)
 		if !ok {
 			return nil
 		}
@@ -4293,7 +4293,7 @@ git commit -m "test(v2): pin that the injection tracing switch reaches the engin
 
 **Interfaces:**
 - Consumes: `hooks.Attached`, `hooks.RootOf`, `hooks.AsModule` (A2, B2).
-- Produces: `func Injector(engine *v0.Injector) *dingo.Injector`, `func Root(injector *dingo.Injector) *v0.Injector`, `func FromRoot(module v0.Module) dingo.Module`, `func ToRoot(module dingo.Module) v0.Module`.
+- Produces: `func Injector(root *v0.Injector) *dingo.Injector`, `func Root(injector *dingo.Injector) *v0.Injector`, `func FromRoot(module v0.Module) dingo.Module`, `func ToRoot(module dingo.Module) v0.Module`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -4368,33 +4368,33 @@ import (
 	dingo "flamingo.me/dingo/v2"
 )
 
-// Injector returns the v2 injector that shares engine's bindings, scopes and interceptors. The
-// typed injector is attached when the engine is created, so every call returns the same value and none of
-// them writes to the engine.
-func Injector(engine *v0.Injector) *dingo.Injector {
-	attached, ok := hooks.Attached(engine).(*dingo.Injector)
+// Injector returns the v2 injector that shares the root injector's bindings, scopes and
+// interceptors. The typed injector is attached when the root injector is created, so every call
+// returns the same value and none of them writes to the root injector.
+func Injector(root *v0.Injector) *dingo.Injector {
+	attached, ok := hooks.Attached(root).(*dingo.Injector)
 	if !ok {
 		// coverage: unreachable through the public API; importing this package links v2, which
-		// installs the hook the engine calls in every constructor
-		panic("dingo/compat: this engine has no typed API")
+		// installs the hook the root calls in every constructor
+		panic("dingo/compat: this root injector has no typed API")
 	}
 
 	return attached
 }
 
-// Engine returns the v0 injector behind a v2 injector.
+// Root returns the root injector behind a typed injector.
 func Root(injector *dingo.Injector) *v0.Injector {
-	engine, ok := hooks.RootOf(injector).(*v0.Injector)
+	root, ok := hooks.RootOf(injector).(*v0.Injector)
 	if !ok {
-		// coverage: unreachable through the public API; every v2 injector wraps an engine
-		panic("dingo/compat: this injector has no engine")
+		// coverage: unreachable through the public API; every v2 injector wraps a root injector
+		panic("dingo/compat: this injector has no root injector")
 	}
 
-	return engine
+	return root
 }
 
-// ToRoot adapts a v2 module so a v0 injector can run it. The engine keys its module graph by the
-// innermost module, so m, ToRoot(m) and ToRoot(FromRoot(m)) are one module.
+// ToRoot adapts a v2 module so a root injector can run it. The root injector keys its module graph
+// by the unwrapped module, so m, ToRoot(m) and ToRoot(FromRoot(m)) are one module.
 func ToRoot(module dingo.Module) v0.Module {
 	adapted, ok := hooks.AsModule(module).(v0.Module)
 	if !ok {
@@ -5052,7 +5052,7 @@ Run against the spec and its appendix after the plan was complete.
 
 **2. Placeholder scan.** No step says "add tests", "handle edge cases", "similar to Task N" or "TBD". Every production file appears as complete code. Test tasks either give the code or give the row set with its fixture and assertion; the catalogue gate turns any omission into a build failure rather than an oversight.
 
-**3. Type consistency.** The names used across tasks were checked against each other: `mustRoot(call string) *v0.Injector`, `attachedOf(engine *v0.Injector) *Injector`, `invalid(call, format string, args ...any) error`, `qualified`, `typeName[T]`, `keyType[T]`, `carrier`, `callOf[T]`, `keyOf[T](call, entry string)`, `collectionKeyOf[T](call, entry, collection string)`, `Binding[T].{must,setTarget,checkTarget,setScope}`, `asModule`/`asModules`, `adapt[T]`, `resolve[T]`, and the helpers `newInjector`, `childOf`, `bindErr`, `bindPanic`, `recovered`, `requireInvalidBinding`, `get[T]`. `keyOf` is the validating form and `keyType` the non-validating one; `binding.go` and `resolve.go` use `keyType`, the four entry points use `keyOf`.
+**3. Type consistency.** The names used across tasks were checked against each other: `Injector.root`, `mustRoot(call string) *v0.Injector`, `attachedOf(root *v0.Injector) *Injector`, `invalid(call, format string, args ...any) error`, `qualified`, `typeName[T]`, `keyType[T]`, `carrier`, `callOf[T]`, `keyOf[T](call, entry string)`, `collectionKeyOf[T](call, entry, collection string)`, `Binding[T].{must,setTarget,checkTarget,setScope}`, `asModule`/`asModules`, `adapt[T]`, `resolve[T]`, and the helpers `newInjector`, `childOf`, `bindErr`, `bindPanic`, `recovered`, `requireInvalidBinding`, `get[T]`. `keyOf` is the validating form and `keyType` the non-validating one; `binding.go` and `resolve.go` use `keyType`, the four entry points use `keyOf`.
 
 **4. Three ordering dependencies are called out where they bite**, rather than left to be discovered: `TestInjector_ZeroValuePanics` references `Inspect` and `BindInterceptor` before B14 and B15 exist (entries commented out, re-enabled by those tasks); `TestBindMessages_HaveTheDocumentedShape` references `BindInterceptor` and `GetInstance[**T]` likewise; and `child_test.go`'s C-03 needs `BindInterceptor`, so B12 runs after B14 or writes C-03 last.
 

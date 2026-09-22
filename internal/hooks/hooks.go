@@ -8,9 +8,9 @@ package hooks
 
 import "reflect"
 
-// Unwrapper is implemented by module adapters. The engine keys the module graph by the
+// Unwrapper is implemented by module adapters. The root injector keys the module graph by the
 // unwrapped module. The method name carries the Dingo prefix so that a third-party module with an
-// unrelated Unwrapper method is not unwrapped by accident.
+// unrelated DingoUnwrap method is not unwrapped by accident.
 type Unwrapper interface {
 	DingoUnwrap() any
 }

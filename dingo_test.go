@@ -440,7 +440,7 @@ func TestNewInjector_AttachesEagerlyAndExactlyOnce(t *testing.T) {
 }
 
 // wrappedModule is a minimal module adapter: it implements hooks.Unwrapper structurally and
-// forwards nothing else, so the engine's Unwrap path is what these tests exercise.
+// forwards nothing else, so the root injector's Unwrap path is what these tests exercise.
 type wrappedModule struct{ inner any }
 
 func (w *wrappedModule) Configure(*Injector) {}

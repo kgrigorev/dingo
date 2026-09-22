@@ -70,4 +70,4 @@ Everything lives in five files of `package dingo`:
 
 ## Planned v2 (not yet implemented)
 
-`docs/v2-generic-api/` holds an approved design for `flamingo.me/dingo/v2`: a type-safe generic typed API (`injector.Bind[T]().To[U]()`) over this v0 engine, shipped as a `v2/` module in this repository with `compat` adapters. Read the design doc and its test catalogue before any work touching v2, the `internal/hooks` idea, or root changes the spec labels behavior-neutral. Until that lands, the root package is the only code.
+`docs/v2-generic-api/` holds an approved design for `flamingo.me/dingo/v2`: a type-safe generic typed API (`injector.Bind[T]().To[U]()`) over this root injector, shipped as a `v2/` module in this repository with `compat` adapters. Read the design doc and its test catalogue before any work touching v2, the `internal/hooks` idea, or root changes the spec labels nearly behavior-neutral (with documented carve-outs: pointer-to-interface wording, `ErrModuleSort` cause, value-typed module naming). Until that lands, the root package is the only code.

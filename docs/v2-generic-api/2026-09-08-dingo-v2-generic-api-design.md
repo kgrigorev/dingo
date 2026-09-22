@@ -122,12 +122,12 @@ import (
 	dingo "flamingo.me/dingo/v2"
 )
 
-// Injector returns the v2 injector that shares engine's bindings, scopes and interceptors.
-// The typed API is attached when the engine is created (NewInjector or Child), so every call
-// returns the same typed injector and never writes to the engine.
-func Injector(engine *v0.Injector) *dingo.Injector
+// Injector returns the v2 injector that shares the root injector's bindings, scopes and
+// interceptors. The typed API is attached when the root injector is created (NewInjector), so
+// every call returns the same typed injector and never writes to the root injector.
+func Injector(root *v0.Injector) *dingo.Injector
 
-// Engine returns the v0 injector behind a v2 injector.
+// Root returns the root injector behind a typed injector.
 func Root(injector *dingo.Injector) *v0.Injector
 
 // FromRoot adapts a v0 module so a v2 injector can run it.
@@ -274,8 +274,9 @@ in `ErrInitModules`, so `errors.Is(err, ErrInitModules)` is false for it. Kept a
 
 ### Interop: two APIs, one engine
 
-- One root injector, one typed injector, attached when the engine is created. The root's `NewInjector` and
-  `Child` call the hooks package's `Attach` hook when the v2 package is linked into the binary, so
+- One root injector, one typed injector, attached when the root injector is created. The root's
+  `NewInjector` calls the hooks package's `Attach` hook once when the v2 package is linked into the
+  binary; `Child` builds through `NewInjector` and must not call `Attach` again. So
   `compat.Injector(e)` only reads a slot and returns the same `*Injector` for the same `e`;
   `compat.Root` inverts it. `NewInjector` in v2 creates a root injector, which attaches its own
   typed injector; `Child` of a typed injector is the typed injector of the root's child, and a child created on the root
@@ -440,7 +441,7 @@ Tests match on the type name, not on the package path of dingo's own types.
 
 ### The v2 core over the engine
 
-- `Injector` holds one field, the engine `*v0.Injector`. Every entry method checks the field and
+- `Injector` holds one field, `root *v0.Injector`. Every entry method checks the field and
   panics with the zero-value message when it is nil; `Child` returns that message as an error.
 - `Bind[T]` computes the key type (`T` minus one pointer level), validates it, and calls the
   engine's `Bind` with a type carrier `reflect.New(key).Interface()`, a `*key` the engine strips
@@ -493,9 +494,9 @@ repository can import it.
 ```go
 package hooks
 
-// Unwrapper is implemented by module adapters. The engine keys the module graph by the
-// innermost module. The method name carries the Dingo prefix so that a third-party module with
-// an unrelated Unwrapper method is not unwrapped by accident.
+// Unwrapper is implemented by module adapters. The root injector keys the module graph by the
+// unwrapped module. The method name carries the Dingo prefix so that a third-party module with
+// an unrelated DingoUnwrap method is not unwrapped by accident.
 type Unwrapper interface {
 	DingoUnwrap() any
 }
@@ -504,7 +505,7 @@ type Unwrapper interface {
 // (ToRoot(FromRoot(m))); the cap exists so that a self-returning adapter cannot loop.
 const MaxUnwrapDepth = 8
 
-// Unwrap follows DingoUnwrap until a value does not implement it, returns nil, returns
+// Unwrap follows DingoUnwrap until a value does not implement Unwrapper, returns nil, returns
 // itself, or MaxUnwrapDepth is reached. A nil return stops at the last non-nil value, so a broken
 // adapter keeps its own identity instead of collapsing onto the nil key.
 func Unwrap(module any) any
@@ -517,7 +518,8 @@ var Attached func(root any) any
 // that does not link v2 attaches nothing.
 var (
 	// Attach creates the typed injector for a root injector and binds it into the root. The root's
-	// NewInjector and Child call it, inside the root injector's construction, before any module runs.
+	// NewInjector calls it once, inside the root injector's construction, before any module runs.
+	// Child must not call it again: Child builds through NewInjector, which already attaches.
 	Attach func(root any) any
 	// RootOf returns the root injector behind a typed injector.
 	RootOf func(attached any) any
@@ -531,7 +533,8 @@ each side asserts its own types. The typed injector lives in a slot on the engin
 per root injector, is found again by `compat.Injector`, and is collected together with its root injector. A
 global registry would pin every injector ever created.
 
-Attachment is eager, in the root's `NewInjector` and `Child`, for a reason found in review: a
+Attachment is eager, in the root's `NewInjector` only (and therefore in `Child`, which calls
+`NewInjector`), for a reason found in review: a
 lazily created typed injector would call `engine.Bind(...).ToInstance(attached)` on first use, and `Bind`
 appends to the unsynchronized binding map (`dingo.go:675`) that resolution reads concurrently
 (`dingo.go:240-241`). With a lazy typed injector, a first `compat.Injector(e)` or an `Inspect` after
@@ -551,9 +554,10 @@ All of them leave every existing v0 call on its current code path. One of them, 
 changes what happens on a path that only wrapped modules reach.
 
 - `internal/hooks` as above. The root's `init` installs `Attached`.
-- `Injector` gets an unexported slot for the typed injector. `NewInjector` and `Child` fill it through
+- `Injector` gets an unexported slot for the typed injector. `NewInjector` fills it through
   `hooks.Attach` when that hook is installed, right after the engine's own self-binding and
-  before any module runs.
+  before any module runs. `Child` must not call `Attach` again: it builds through `NewInjector`,
+  which already attaches once.
 - `moduleKeyOf` keys by `hooks.Unwrap(module)`: the unwrapped module's type, plus its value
   when the type is the root's `ModuleFunc`, or when it is not a root `Module` and its kind is
   `Func` (a v2 `ModuleFunc`). A module that is not wrapped takes exactly today's path.

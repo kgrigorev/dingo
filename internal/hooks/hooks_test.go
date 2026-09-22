@@ -24,8 +24,8 @@ type funcWrapper struct{ inner any }
 
 func (f funcWrapper) DingoUnwrap() any { return f.inner }
 
-// TestUnwrap_StopsOnNilFixedPointAndDepth pins the unwrap contract the engine keys its module
-// graph on.
+// TestUnwrap_StopsOnNilFixedPointAndDepth pins the unwrap contract the root injector keys its
+// module graph on.
 // Catches: a nil-returning adapter collapsing every wrapped module onto one nil key so that only
 // the first is configured; a self-returning adapter looping forever; two distinct wrapped modules
 // becoming one; and a comparability panic when the wrapped value is a function.
