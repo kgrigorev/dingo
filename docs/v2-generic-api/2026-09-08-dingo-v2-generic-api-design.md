@@ -1,8 +1,8 @@
 # dingo v2: generic method binding API
 
-Date: 2026-09-08, revised 2026-09-09 (test suite redesigned, review decisions recorded, facade
+Date: 2026-09-08, revised 2026-09-09 (test suite redesigned, review decisions recorded, typed API
 architecture adopted for Flamingo compatibility), revised 2026-09-14 (spec review applied:
-`ToType`, `Override` semantics corrected, eager facade attachment, root pointer guard in
+`ToType`, `Override` semantics corrected, eager typed-API attachment, root pointer guard in
 `InitModules`, catalogue statements for every ID; see review decisions 10 to 26)
 Repository: github.com/i-love-flamingo/dingo (import paths `flamingo.me/dingo`, `flamingo.me/dingo/v2`)
 Status: design approved; the root changes it needs are implemented, the v2 module is not yet
@@ -27,16 +27,16 @@ so `dingo.TryModule` tests catch it.
 
 Flamingo is dingo's main user. The new API must let Flamingo, its ecosystem modules and the
 applications built on them move over module by module, on one injector, without a lockstep
-release. The v0 reflection API therefore stays as the engine, and v2 is a facade over it.
+release. The v0 reflection API therefore stays as the engine, and v2 is a typed injector over it.
 
 ## Decisions
 
 | Topic | Decision | Reason |
 |---|---|---|
-| Delivery | New major `flamingo.me/dingo/v2` as a module in the `v2/` directory of the same repository, first tag `v2.0.0` | Go has no overloading, so `Bind`, `To`, `Binding` and the rest keep their names only in a new major. A separate import path lets v0 and v2 coexist in one build. The subdirectory lets engine and facade change in one commit and share private packages. |
-| Architecture | v2 is a generic facade over the v0 engine. The engine stays in the root module and keeps its behavior; v2 requires the root module | Flamingo v3.17 and 245 module `Configure` implementations, plus eight OSS modules, speak v0. With two separate engines every module in the ecosystem would have to move at once inside a Flamingo major. One shared engine runs v0 and v2 modules on one injector, so the ecosystem migrates a module at a time. Runtime behavior is identical by construction, not by re-implementation. |
+| Delivery | New major `flamingo.me/dingo/v2` as a module in the `v2/` directory of the same repository, first tag `v2.0.0` | Go has no overloading, so `Bind`, `To`, `Binding` and the rest keep their names only in a new major. A separate import path lets v0 and v2 coexist in one build. The subdirectory lets root injector and typed API change in one commit and share private packages. |
+| Architecture | v2 is a generic typed API over the v0 engine. The engine stays in the root module and keeps its behavior; v2 requires the root module | Flamingo v3.17 and 245 module `Configure` implementations, plus eight OSS modules, speak v0. With two separate engines every module in the ecosystem would have to move at once inside a Flamingo major. One shared engine runs v0 and v2 modules on one injector, so the ecosystem migrates a module at a time. Runtime behavior is identical by construction, not by re-implementation. |
 | Bridge | Package `flamingo.me/dingo/v2/compat` adapts injectors and modules both ways. The core package `flamingo.me/dingo/v2` names no v0 identifier | compat can be removed later without touching the v2 core API. |
-| Root changes | Behavior-neutral for every existing v0 call: a private bridge package, a facade slot on `Injector` filled eagerly through a bridge hook, `moduleKeyOf` and `InitModules` looking through module adapters, a pointer guard on the module type named in `InitModules`' injection error, a shared type-name package, `ErrPointerToInterface` exported, the `ErrModuleSort` cause wrapped, tests added, one renamed (full list under "Root changes"). Released as v0.5.0 before v2 exists | Every existing v0 call takes the same code path as before. The pointer guard is only reachable once modules are wrapped (review decision 12). |
+| Root changes | Behavior-neutral for every existing v0 call: a private hooks package, an attached slot on `Injector` filled eagerly through hooks.Attach, `moduleKeyOf` and `InitModules` looking through module adapters, a pointer guard on the module type named in `InitModules`' injection error, a shared type-name package, `ErrPointerToInterface` exported, the `ErrModuleSort` cause wrapped, tests added, one renamed (full list under "Root changes"). Released as v0.5.0 before v2 exists | Every existing v0 call takes the same code path as before. The pointer guard is only reachable once modules are wrapped (review decision 12). |
 | Runtime behavior | Identical to v0.4.1 at resolution time, except two error messages: the pointer-to-interface injection error (review decision 3) and the sort error, which gains its cause (review decision 8). Bind-time checks are stricter, and the deliberate tightenings are listed under "Deliberate tightenings against v0" | Fixes that land in the engine reach v2 through a version bump. |
 | Runtime-typed binding targets | `ToType(reflect.Type)` ships in v2.0 as the documented escape hatch for a target chosen at run time (review decision 10) | Flamingo's `web.BindRoutes` and `flamingo.BindTemplateFunc` take a value and bind its dynamic type as the target (`BindMulti(new(RoutesModule)).To(m)`, `BindMap(new(TemplateFunc), name).To(fnc)`); 28 call sites in Flamingo alone, more in commerce and om3. Without `ToType` the helpers would have to change signature for every caller, or switch to `ToInstance`, which skips construction and injection of the target. |
 | Runtime-typed binding keys | None in v2.0 | Only Flamingo's config loop binds a runtime-typed key. It keeps binding through the v0 engine until Flamingo drops v0; the end-state type switch is in the migration guide. A `BindType(reflect.Type)` escape hatch for keys, and a `reflect.Type` form of `GetInstance`, can be added in a 2.x minor without breaking anyone. |
@@ -122,19 +122,19 @@ import (
 	dingo "flamingo.me/dingo/v2"
 )
 
-// Injector returns the v2 injector that shares engine's bindings, scopes and interceptors.
-// The facade is attached when the engine is created (NewInjector or Child), so every call
-// returns the same facade and never writes to the engine.
-func Injector(engine *v0.Injector) *dingo.Injector
+// Injector returns the v2 injector that shares the root injector's bindings, scopes and
+// interceptors. The typed API is attached when the root injector is created (NewInjector), so
+// every call returns the same typed injector and never writes to the root injector.
+func Injector(root *v0.Injector) *dingo.Injector
 
-// Engine returns the v0 injector behind a v2 injector.
-func Engine(injector *dingo.Injector) *v0.Injector
+// Root returns the root injector behind a typed injector.
+func Root(injector *dingo.Injector) *v0.Injector
 
-// FromV0 adapts a v0 module so a v2 injector can run it.
-func FromV0(module v0.Module) dingo.Module
+// FromRoot adapts a v0 module so a v2 injector can run it.
+func FromRoot(module v0.Module) dingo.Module
 
-// ToV0 adapts a v2 module so a v0 injector can run it.
-func ToV0(module dingo.Module) v0.Module
+// ToRoot adapts a v2 module so a v0 injector can run it.
+func ToRoot(module dingo.Module) v0.Module
 ```
 
 Both adapters implement `Depender` unconditionally. Their `Depends()` returns nil, not an empty
@@ -150,7 +150,7 @@ v2 compatibility promise, and it is removed in a later v2 minor release after an
 One exported addition: `var ErrPointerToInterface = errors.New("pointer to interface is not
 allowed")`. The unexported `errPointersToInterface` becomes an alias of it and the field-injection
 error keeps wrapping it. No exported symbol changes otherwise; the sort error keeps its sentinel
-`ErrModuleSort` and only gains the wrapped cause. The two new packages `internal/bridge` and
+`ErrModuleSort` and only gains the wrapped cause. The two new packages `internal/hooks` and
 `internal/typename` are not API; nothing outside this repository can import them.
 
 ## Semantics
@@ -274,20 +274,21 @@ in `ErrInitModules`, so `errors.Is(err, ErrInitModules)` is false for it. Kept a
 
 ### Interop: two APIs, one engine
 
-- One engine, one facade, attached when the engine is created. The root's `NewInjector` and
-  `Child` call the bridge's `NewFacade` hook when the v2 package is linked into the binary, so
+- One root injector, one typed injector, attached when the root injector is created. The root's
+  `NewInjector` calls the hooks package's `Attach` hook once when the v2 package is linked into the
+  binary; `Child` builds through `NewInjector` and must not call `Attach` again. So
   `compat.Injector(e)` only reads a slot and returns the same `*Injector` for the same `e`;
-  `compat.Engine` inverts it. `NewInjector` in v2 creates an engine, which attaches its own
-  facade; `Child` of a facade is the facade of the engine's child, and a child created on the v0
-  side (`engine.Child()`, as Flamingo's `config.Area` does) has its facade too. A binary without
-  the v2 package has no facade and no facade binding (review decision 14).
-- Both self-bindings exist on every engine that has a facade. A field of type `*dingo.Injector`
-  (root) receives the engine, a field of type `*dingo.Injector` (v2) receives its facade. Inside a
-  child, the child's. The facade binding is visible to `Inspect` and therefore to Flamingo's
+  `compat.Root` inverts it. `NewInjector` in v2 creates a root injector, which attaches its own
+  typed injector; `Child` of a typed injector is the typed injector of the root's child, and a child created on the root
+  side (`engine.Child()`, as Flamingo's `config.Area` does) has its typed injector too. A binary without
+  the v2 package has no typed injector and no typed-injector binding (review decision 14).
+- Both self-bindings exist on every engine that has a typed injector. A field of type `*dingo.Injector`
+  (root) receives the engine, a field of type `*dingo.Injector` (v2) receives its typed injector. Inside a
+  child, the child's. The typed-injector binding is visible to `Inspect` and therefore to Flamingo's
   `-dingo-inspect` output (`app.go:346-372`) as soon as v2 is linked; Flamingo's own `Inspector`
   is a v0 one and keeps working.
-- Module identity is the innermost module. The engine keys the module graph by the module inside
-  any number of adapter layers, so `m`, `FromV0(m)` and `ToV0(FromV0(m))` are one module:
+- Module identity is the unwrapped module. The engine keys the module graph by the module inside
+  any number of adapter layers, so `m`, `FromRoot(m)` and `ToRoot(FromRoot(m))` are one module:
   configured once, and a `Depender`'s dependencies of either kind are configured once, before it.
   `ModuleFunc` values of either package are keyed by value, as v0 does today.
 - An adapted module's `inject` fields are populated, and its `Inject` method called, immediately
@@ -297,7 +298,7 @@ in `ErrInitModules`, so `errors.Is(err, ErrInitModules)` is false for it. Kept a
   path from tagged fields (`dingo.go:735-743` against `:748-791`), and others in Flamingo,
   commerce and om3 do the same (not counted). Both shapes are pinned. When injection fails,
   `InitModules` returns the engine's `initmodules: injection into %q failed` error, naming the
-  innermost module's type, and `Configure` does not run. `TryModule` of either package returns
+  unwrapped module's type, and `Configure` does not run. `TryModule` of either package returns
   it. The innermost module may be a value (`MyModule{}`, a `ModuleFunc`), so the root's type
   naming in that error is pointer-guarded (see "Root changes").
 - Bindings, multibindings, map bindings, scopes and interceptors made through either API are
@@ -305,8 +306,8 @@ in `ErrInitModules`, so `errors.Is(err, ErrInitModules)` is false for it. Kept a
   and a scope registered with `BindScope` on one side serves `In` on the other.
 - v2's bind-time checks run before the engine is touched. A v2 misuse inside an adapted module
   panics with the same error wrapping `ErrInvalidBinding`, and the root's `TryModule` returns it.
-- `Inspect` on a facade lists bindings of both origins; `InspectParent` receives the parent's
-  facade, which already exists, so inspection creates nothing and writes nothing.
+- `Inspect` on a typed injector lists bindings of both origins; `InspectParent` receives the parent's
+  typed injector, which already exists, so inspection creates nothing and writes nothing.
 - Sentinels are shared values: `errors.Is(err, dingo.ErrPointerToInterface)` with either
   package's name is the same test; likewise the four module and init errors.
 - Panics and error messages produced by the engine keep their v0 wording, with two exceptions:
@@ -382,7 +383,7 @@ nobody mistakes it for an accident. Verified against `dingo.go` on 2026-09-09.
   through `BindMulti` adds a singular binding and leaves the slice untouched (both reproduced
   2026-09-14). The error branch is reachable only when the stored key is itself a pointer type,
   which v2 rejects (B-03). v0's `TestOverrides` never covered the unknown case. Kept, pinned as a
-  decision, and documented in the README; a facade-side check is not possible because an
+  decision, and documented in the README; a typed injector-side check is not possible because an
   `Override` may legitimately precede the `Bind` it overrides in another module (review
   decision 11).
 - `Override` after `InitModules` is never evaluated: the override loop runs inside `InitModules`
@@ -440,7 +441,7 @@ Tests match on the type name, not on the package path of dingo's own types.
 
 ### The v2 core over the engine
 
-- `Injector` holds one field, the engine `*v0.Injector`. Every entry method checks the field and
+- `Injector` holds one field, `root *v0.Injector`. Every entry method checks the field and
   panics with the zero-value message when it is nil; `Child` returns that message as an error.
 - `Bind[T]` computes the key type (`T` minus one pointer level), validates it, and calls the
   engine's `Bind` with a type carrier `reflect.New(key).Interface()`, a `*key` the engine strips
@@ -458,23 +459,23 @@ Tests match on the type name, not on the package path of dingo's own types.
 - `GetInstance[T]` checks for pointer-to-interface and pointer-to-pointer, calls the engine's
   `GetInstance` with `reflect.TypeFor[T]()` (the engine accepts a `reflect.Type` directly), and
   adapts the result to `T` as described under Resolution. `GetAnnotatedInstance[T]` likewise.
-- `NewInjector` creates an engine with the root's `NewInjector()`, which attaches the facade
-  through the bridge hook, reads the facade back, then calls `InitModules`. `InitModules` wraps
+- `NewInjector` creates an engine with the root's `NewInjector()`, which attaches the typed injector
+  through hooks.Attach, reads the typed injector back, then calls `InitModules`. `InitModules` wraps
   every v2 module in the engine adapter and calls the engine's `InitModules`, so the module
   graph, dedup, `Depender` handling, the delayed `RequestInjection` queue and eager singletons are
   the engine's. `TryModule` builds an engine the same way, disables eager singletons, and recovers
   panics as the root's does.
-- The engine adapter implements the root's `Module` and `Depender` and the bridge's
-  `WrappedModule`. Its `Configure(engine)` fetches the facade and calls the v2 module's
+- The engine adapter implements the root's `Module` and `Depender` and the hooks package's
+  `Unwrapper`. Its `Configure(engine)` fetches the typed injector and calls the v2 module's
   `Configure` with it. Its `Depends` adapts the v2 dependencies, returning nil when the inner
   module is not a `Depender`. The adapter has no `inject` fields of its own. The engine's
-  `InitModules` injects `bridge.Innermost(module)`, so the v2 module's fields are set before
+  `InitModules` injects `hooks.Unwrap(module)`, so the v2 module's fields are set before
   `Configure`, and an injection failure returns from `InitModules` exactly as for a native module.
   The adapter never sees that error.
 - `Inspector` is a v2 struct with the same reflect-typed callbacks as the root's. `Inspect`
   builds a root `Inspector` that keeps the nil-ness of each callback (the engine branches on
   `!= nil` per callback, `inspect.go:15,31,47,63`), forwards to the engine and hands
-  `InspectParent` the parent's already attached facade.
+  `InspectParent` the parent's already attached typed injector.
 - `EnableCircularTracing` and `EnableInjectionTracing` call the root functions and are pinned
   by one non-parallel v2 test for injection tracing (see Hermeticity).
 - `Scope`, `SingletonScope` and `ChildSingletonScope` are type aliases; `Singleton`,
@@ -482,64 +483,66 @@ Tests match on the type name, not on the package path of dingo's own types.
   `EnableCircularTracing` and `EnableInjectionTracing` call the root functions.
 - Type names in messages come from `flamingo.me/dingo/internal/typename`, shared with the engine.
 
-### The private contract: `flamingo.me/dingo/internal/bridge`
+### The private contract: `flamingo.me/dingo/internal/hooks`
 
 Go's rule for `internal` packages is import-path based: `flamingo.me/dingo/v2` may import
 `flamingo.me/dingo/internal/...` although it is a separate module (verified 2026-09-09 with a
 two-module spike; a module outside the path is refused with "use of internal package ... not
-allowed"). This package is the only coupling between engine and facade, and nothing outside the
+allowed"). This package is the only coupling between root injector and typed API, and nothing outside the
 repository can import it.
 
 ```go
-package bridge
+package hooks
 
-// WrappedModule is implemented by module adapters. The engine keys the module graph by the
-// innermost module. The method name carries the Dingo prefix so that a third-party module with
-// an unrelated WrappedModule method is not unwrapped by accident.
-type WrappedModule interface {
-	DingoWrappedModule() any
+// Unwrapper is implemented by module adapters. The root injector keys the module graph by the
+// unwrapped module. The method name carries the Dingo prefix so that a third-party module with
+// an unrelated DingoUnwrap method is not unwrapped by accident.
+type Unwrapper interface {
+	DingoUnwrap() any
 }
 
-// MaxDepth bounds Innermost. Two adapter layers is the deepest legitimate nesting
-// (ToV0(FromV0(m))); the cap exists so that a self-returning adapter cannot loop.
-const MaxDepth = 8
+// MaxUnwrapDepth bounds Unwrap. Two adapter layers is the deepest legitimate nesting
+// (ToRoot(FromRoot(m))); the cap exists so that a self-returning adapter cannot loop.
+const MaxUnwrapDepth = 8
 
-// Innermost follows DingoWrappedModule until a value does not implement it, returns nil, returns
-// itself, or MaxDepth is reached. A nil return stops at the last non-nil value, so a broken
+// Unwrap follows DingoUnwrap until a value does not implement Unwrapper, returns nil, returns
+// itself, or MaxUnwrapDepth is reached. A nil return stops at the last non-nil value, so a broken
 // adapter keeps its own identity instead of collapsing onto the nil key.
-func Innermost(module any) any
+func Unwrap(module any) any
 
 // Installed by package flamingo.me/dingo in an init function.
-// Facade returns the facade attached to an engine, or nil when none was attached.
-var Facade func(engine any) any
+// Attached returns the typed injector attached to a root injector, or nil when none was attached.
+var Attached func(root any) any
 
 // Installed by package flamingo.me/dingo/v2 in an init function. Nil until then, so a binary
-// that does not link v2 attaches no facade.
+// that does not link v2 attaches nothing.
 var (
-	// NewFacade creates the facade for an engine and binds it into the engine. The root's
-	// NewInjector and Child call it, under the engine's construction, before any module runs.
-	NewFacade func(engine any) any
-	// EngineOf returns the engine behind a facade.
-	EngineOf func(facade any) any
-	// ToEngineModule wraps a v2 module in the engine adapter.
-	ToEngineModule func(module any) any
+	// Attach creates the typed injector for a root injector and binds it into the root. The root's
+	// NewInjector calls it once, inside the root injector's construction, before any module runs.
+	// Child must not call it again: Child builds through NewInjector, which already attaches.
+	Attach func(root any) any
+	// RootOf returns the root injector behind a typed injector.
+	RootOf func(attached any) any
+	// AsModule wraps a v2 module in the root Module adapter.
+	AsModule func(module any) any
 )
 ```
 
 Values are typed `any` because neither package can import the other's types without a cycle;
-each side asserts its own types. The facade lives in a slot on the engine, so it is created once
-per engine, is found again by `compat.Injector`, and is collected together with its engine. A
+each side asserts its own types. The typed injector lives in a slot on the engine, so it is created once
+per root injector, is found again by `compat.Injector`, and is collected together with its root injector. A
 global registry would pin every injector ever created.
 
-Attachment is eager, in the root's `NewInjector` and `Child`, for a reason found in review: a
-lazily created facade would call `engine.Bind(...).ToInstance(facade)` on first use, and `Bind`
+Attachment is eager, in the root's `NewInjector` only (and therefore in `Child`, which calls
+`NewInjector`), for a reason found in review: a
+lazily created typed injector would call `engine.Bind(...).ToInstance(attached)` on first use, and `Bind`
 appends to the unsynchronized binding map (`dingo.go:675`) that resolution reads concurrently
-(`dingo.go:240-241`). With a lazy facade, a first `compat.Injector(e)` or an `Inspect` after
+(`dingo.go:240-241`). With a lazy typed injector, a first `compat.Injector(e)` or an `Inspect` after
 `InitModules` would race against running resolutions. Eager attachment keeps every write inside
-engine construction, where nothing else runs (review decision 14). The `Facade` hook installed by
+engine construction, where nothing else runs (review decision 14). The `Attached` hook installed by
 the root reads the slot only. The slot needs no mutex: it is written once in the constructor.
 
-`Innermost`'s stop conditions are pinned by a root test: a `DingoWrappedModule` that returns nil
+`Unwrap`'s stop conditions are pinned by a root test: a `DingoUnwrap` that returns nil
 keeps the adapter's own identity, a fixed point stops, two wrapped modules with distinct inner
 values stay distinct, and depth is capped (review decision 15). Without the nil stop, every adapter
 returning nil would collapse into one `moduleKey{typ: nil}` and only the first would be
@@ -550,19 +553,20 @@ configured.
 All of them leave every existing v0 call on its current code path. One of them, the pointer guard,
 changes what happens on a path that only wrapped modules reach.
 
-- `internal/bridge` as above. The root's `init` installs `Facade`.
-- `Injector` gets an unexported slot for the facade. `NewInjector` and `Child` fill it through
-  `bridge.NewFacade` when that hook is installed, right after the engine's own self-binding and
-  before any module runs.
-- `moduleKeyOf` keys by `bridge.Innermost(module)`: the innermost module's type, plus its value
+- `internal/hooks` as above. The root's `init` installs `Attached`.
+- `Injector` gets an unexported slot for the typed injector. `NewInjector` fills it through
+  `hooks.Attach` when that hook is installed, right after the engine's own self-binding and
+  before any module runs. `Child` must not call `Attach` again: it builds through `NewInjector`,
+  which already attaches once.
+- `moduleKeyOf` keys by `hooks.Unwrap(module)`: the unwrapped module's type, plus its value
   when the type is the root's `ModuleFunc`, or when it is not a root `Module` and its kind is
   `Func` (a v2 `ModuleFunc`). A module that is not wrapped takes exactly today's path.
-- `InitModules` injects `bridge.Innermost(module)` instead of `module` and names the innermost
+- `InitModules` injects `hooks.Unwrap(module)` instead of `module` and names the unwrapped
   module's type in its `initmodules: injection into %q failed` error. For an unwrapped module
   both are the module itself.
 - The type naming in that error is pointer-guarded. Today it is `reflect.TypeOf(module).Elem()`
   unconditionally (`dingo.go:125`), safe only because a root `Module` is in practice always a
-  pointer. With `Innermost` in front of it, a value-typed inner module (`MyModule{}`, a
+  pointer. With `Unwrap` in front of it, a value-typed inner module (`MyModule{}`, a
   `ModuleFunc`) would reach `.Elem()` on a non-pointer type and panic with `reflect: Elem of
   invalid type` (reproduced 2026-09-14). The root PR routes the name through
   `typename.Qualified`, which strips a pointer level only when there is one, and pins it with a
@@ -581,7 +585,7 @@ changes what happens on a path that only wrapped modules reach.
   today, and gonum's `topo.SortStabilized` reports cycles through the branch above it, so the
   line takes the `// coverage:` comment rather than a test.
 - Tests added: `EnableInjectionTracing` emits log lines for field sets and resolutions
-  (behavior R-27, untested today); `Innermost`'s stop conditions; the pointer guard above. The
+  (behavior R-27, untested today); `Unwrap`'s stop conditions; the pointer guard above. The
   root's `TestDingoCircula` gets its missing letters.
 - The `errors.AsType` TODO at `module.go:131` stays as it is. `errors.AsType` needs a `go` line of
   1.26 or later and the root keeps `go 1.25.8`, so only the v2 module can use it (see Testing).
@@ -590,13 +594,13 @@ changes what happens on a path that only wrapped modules reach.
 
 ### compat
 
-- `Injector(e)` asserts `bridge.Facade(e)` and panics with a message when the slot is empty,
+- `Injector(e)` asserts `hooks.Attached(e)` and panics with a message when the slot is empty,
   which can only happen for an engine created before the v2 package was linked, that is, never in
-  a binary that imports compat. `Engine(f)` asserts `bridge.EngineOf(f)`. `ToV0(m)` asserts
-  `bridge.ToEngineModule(m)`.
-- `FromV0(m)` returns compat's own adapter: it implements the v2 `Module` and `Depender` and
-  `WrappedModule`; its `Configure(facade)` calls `m.Configure` with `Engine(facade)`. The engine
-  adapter injects `m` before that call, because `Innermost` sees through both layers. Its
+  a binary that imports compat. `Root(f)` asserts `hooks.RootOf(f)`. `ToRoot(m)` asserts
+  `hooks.AsModule(m)`.
+- `FromRoot(m)` returns compat's own adapter: it implements the v2 `Module` and `Depender` and
+  `Unwrapper`; its `Configure(attached)` calls `m.Configure` with `Root(attached)`. The root
+  adapter injects `m` before that call, because `Unwrap` sees through both layers. Its
   `Depends()` returns nil when `m` is not a `Depender`.
 - compat has no state of its own. Deleting the directory removes every v0 name from the v2
   module.
@@ -608,10 +612,10 @@ Layout after the v2 PR:
 ```
 go.mod                  module flamingo.me/dingo, go 1.25.8 (unchanged)
 go.work                 go 1.27; use (. ./v2); committed, with go.work.sum when non-empty
-internal/bridge/        the private contract
+internal/hooks/        the private contract
 internal/typename/      shared type names
 v2/go.mod               module flamingo.me/dingo/v2, go 1.27, require flamingo.me/dingo v0.5.0, no replace
-v2/                     package dingo: the facade, README.md, doc.go, coverage.min, the test suite
+v2/                     package dingo: the typed injector, README.md, doc.go, coverage.min, the test suite
 v2/compat/              package compat and its tests
 v2/example/             the root example ported to v2; the two directories diff as a migration reference
 v2/testdata/            catalogue.txt, compilefail/, moduleidentity/
@@ -633,14 +637,14 @@ v2/testdata/            catalogue.txt, compilefail/, moduleidentity/
   the root depends on nothing new. Root consumers keep their toolchain.
 - `.github/workflows/main.yml`:
   - `tests`: matrix `['1.27', '1.*']`, `go test -shuffle=on -race ./... ./v2/...` in workspace
-    mode, so the facade is tested against the engine at the same commit. Shuffle is the cheap
+    mode, so the typed injector is tested against the engine at the same commit. Shuffle is the cheap
     detector for order dependence through the global `Singleton`.
   - `tests-v0`: matrix `['1.25', '1.*']`, `GOWORK=off`, `go test -race ./...`: the root as its
     consumers build it.
   - `tests-v2-published`: `GOWORK=off`, working directory `v2`, `go test -race ./...`: v2 against
     the root version its `go.mod` requires, fetched from the proxy. Fails when v2 relies on an
     unreleased root change. On pull requests the job runs with `continue-on-error: true`, so a
-    coordinated engine-plus-facade PR can be green while the root change it needs is not yet on
+    coordinated root-plus-typed-API PR can be green while the root change it needs is not yet on
     the proxy; on pushes to `master` it is required. Without that split every such PR would be
     red until the root is released (review decision 25).
   - `coverage`: one profile per module. The v2 profile runs over
@@ -682,7 +686,7 @@ v2/testdata/            catalogue.txt, compilefail/, moduleidentity/
     v2 tag would become the nearest tagged ancestor, and the next run would base off `0.5.1` and
     open `Release v0.5.2`, taking the automatic stream back to v0. Instead a `release/v0.x`
     maintenance branch is cut from the `v0.5.0` release commit when v2.0.0 ships. An engine fix
-    lands on master first, because workspace-mode CI tests the facade against the engine at the
+    lands on master first, because workspace-mode CI tests the typed injector against the engine at the
     same commit, then is cherry-picked to `release/v0.x`, tagged `v0.5.x` there by hand and
     released with `gh release create`. Semanticore only runs on master pushes, and tags on that
     branch are not in master's history, so it never sees them.
@@ -756,7 +760,7 @@ Running a v2 module where a v0 module list is expected, the shape a Flamingo app
 ```go
 flamingo.App([]dingo.Module{
 	new(locale.Module),          // v0
-	compat.ToV0(new(MyModule)),  // v2
+	compat.ToRoot(new(MyModule)),  // v2
 })
 ```
 
@@ -798,7 +802,7 @@ through minimum version selection, which is backward compatible.
 
 0. No Flamingo change. Any module, in Flamingo or in an application, can write its `Configure`
    body against v2 today through `compat.Injector(injector)` while keeping the v0 signature.
-   Applications can list v2 modules with `compat.ToV0`. Nothing in Flamingo's API moves.
+   Applications can list v2 modules with `compat.ToRoot`. Nothing in Flamingo's API moves.
 1. Flamingo v3 minor releases migrate Flamingo's own module bodies the same way, file by file, in
    any order. Exported module types keep implementing the root's `Module`, so no application
    changes. Flamingo's four helpers fall in two groups. `BindEventSubscriber` (returns a
@@ -813,12 +817,12 @@ through minimum version selection, which is backward compatible.
    `Bind(Area{}).ToInstance(area)`) and the `Inspector` in `app.go` stay on v0 unchanged.
 2. Flamingo v4 flips the signatures: `NewApplication`, `App`, `WithCustomLogger`,
    `config.NewArea`, `config.Area`, `GetInitializedInjector`, `config.TryModules` and every
-   `Configure` take v2 types. Third-party v0 modules keep working through `compat.FromV0` at the
-   list site. The config loop calls `compat.Engine(injector).Bind(v)` until step 3. Ecosystem
+   `Configure` take v2 types. Third-party v0 modules keep working through `compat.FromRoot` at the
+   list site. The config loop calls `compat.Root(injector).Bind(v)` until step 3. Ecosystem
    modules (pugtemplate, graphql, form, httpcache, opentelemetry, commerce, commerce-contrib,
    redirects) migrate on their own schedule, wrapped until they do.
 3. Once every maintained module is on v2, Flamingo drops compat: the config loop becomes the
-   type switch above, `FromV0` wrappers go, and Flamingo requires only `flamingo.me/dingo/v2`.
+   type switch above, `FromRoot` wrappers go, and Flamingo requires only `flamingo.me/dingo/v2`.
    This is the trigger for dingo's standalone step.
 
 Call shapes needing care, from the Flamingo audit:
@@ -841,10 +845,10 @@ Call shapes needing care, from the Flamingo audit:
 
 ## Path to a standalone v2
 
-The facade is the migration vehicle, not the end state. When the ecosystem no longer imports the
+The typed API is the migration vehicle, not the end state. When the ecosystem no longer imports the
 root module, the engine moves into the v2 module and the root is frozen. This section seeds the
 spec for that step, written when the preconditions hold; it is not part of this implementation.
-It is recorded now so that nothing in the facade design forecloses it.
+It is recorded now so that nothing in the typed injector design forecloses it.
 
 Preconditions, all observable:
 
@@ -871,9 +875,9 @@ Steps, each its own PR against master:
    the engine moves to v2 in the same release, `Changelog.md` carries the note through
    semanticore's release notes.
 2. Move the engine. `dingo.go`, `binding.go`, `scope.go`, `inspect.go`, `module.go` and
-   `internal/typename` are copied into the v2 module as unexported implementation, and the facade
+   `internal/typename` are copied into the v2 module as unexported implementation, and the typed injector
    collapses onto them:
-   - `Injector` becomes the engine struct itself; the facade slot, the engine adapter,
+   - `Injector` becomes the engine struct itself; the attached slot, the engine adapter,
      `reflect.New` type carriers and the result adaptation copy go away.
    - The unexported `binding` struct holds today's fields plus the three flags; `Binding[T]`
      wraps a `*binding` in a named field and writes the fields directly.
@@ -886,14 +890,14 @@ Steps, each its own PR against master:
      Every caller compiles unchanged: `In` and `BindScope` take the interface, and the two scope
      types are only ever passed as `Scope`.
    - `moduleKeyOf`, `modGraph`, `TryModule` and the tracing switches move as they are;
-     `WrappedModule` handling is deleted with the last adapter.
+     `Unwrapper` handling is deleted with the last adapter.
    - `Inspector` and `Inspect` move as they are.
 3. Delete `v2/compat`, drop `require flamingo.me/dingo` from `v2/go.mod`, drop the README
    sentence that points at the root `example/` as the migration twin, and remove the CI jobs that
    only exist for the shared engine (`tests-v2-published`). `go.work` stays while both modules are
    in the repository.
 4. Freeze the root. Root `doc.go` gets `Deprecated: use flamingo.me/dingo/v2`; the root README
-   says fixes go to v2 only; the bridge package, the facade slot and the `Innermost` call in
+   says fixes go to v2 only; the hooks package, the attached slot and the `Unwrap` call in
    `moduleKeyOf` are removed from the root, since nothing installs the hooks any more. The root
    keeps building and its suite keeps running in CI so the frozen version stays green on new Go
    releases.
@@ -902,16 +906,16 @@ Steps, each its own PR against master:
 
 Acceptance test for step 2: the v2 test suite passes without edits, except that the interop tests
 in `compat/` are deleted with the package and the IDs excused to the root suite (`R-25`,
-`DUP-03`, the white-box halves of `M-03` and `M-05`, and the root-only tests for `Innermost` and
+`DUP-03`, the white-box halves of `M-03` and `M-05`, and the root-only tests for `Unwrap` and
 the pointer guard) come back into v2 as white-box tests in `package dingo`, rewritten from the
 root files they point to. The same PR deletes their excuse lines from `testdata/catalogue.txt`, so
 the catalogue gate fails until the rewritten tests exist.
 
-Design constraints that keep this step cheap, honored by the facade design above:
+Design constraints that keep this step cheap, honored by the typed injector design above:
 
 - The v2 public API mentions no root identifier except through aliases that become v2 types
   with identical method sets, and shared sentinel values that become v2 values.
-- All coupling goes through `internal/bridge` and the `compat` directory; both are deleted, not
+- All coupling goes through `internal/hooks` and the `compat` directory; both are deleted, not
   refactored.
 - The v2 suite is black box against the v2 API only, so it survives the engine move unchanged.
 - The behavior IDs describe engine behavior as observed through v2, so the catalogue is the
@@ -964,15 +968,15 @@ noted.
 | `compilefail_test.go` | Drives the compile-fail corpus. | B-12 |
 | `readme_test.go` | Guard: fenced Go blocks in `v2/README.md` use v2 call shapes. | |
 | `catalogue_test.go` | Gate: every ID has a statement and is referenced or excused. | |
-| `compat/compat_test.go` (package `compat_test`) | Two APIs on one engine: facade identity, adapters both ways, module identity, injection timing, both self-bindings, shared scopes and interceptors, checks through v0 entry points, the config loop, `Inspect`, shared sentinels, shared multibindings, engine wording, injection failure, the Flamingo-shaped module tree. | X-01..X-20 |
+| `compat/compat_test.go` (package `compat_test`) | Two APIs on one root injector: typed-injector identity, adapters both ways, module identity, injection timing, both self-bindings, shared scopes and interceptors, checks through root entry points, the config loop, `Inspect`, shared sentinels, shared multibindings, root wording, injection failure, the Flamingo-shaped module tree. | X-01..X-20 |
 | `compat/example_test.go` (package `compat_test`) | Two whole-file Examples: v2 inside a v0 module, a v2 module in a v0 module list. | |
 
 Engine-internal behavior stays in the root module: the white-box tables for module sorting and
 cycles (`module_test.go`), `binding.equal` (`binding_test.go`), circular tracing
-(`circular_test.go`), injection tracing, `Innermost` and the pointer guard (added by the root PR).
+(`circular_test.go`), injection tracing, `Unwrap` and the pointer guard (added by the root PR).
 The catalogue excuses `M-03` and `M-05`'s white-box halves, `DUP-03` and `R-25` with those file
 names; their public views are covered in v2. `R-27` is pinned in both places: the root test
-asserts the engine's log lines, the v2 test that the facade's switch reaches them.
+asserts the engine's log lines, the v2 test that the typed injector's switch reaches them.
 
 ```
 testdata/moduleidentity/{commerce,om3}/cart/   fixture packages with same-named modules, imports on /v2
@@ -1062,7 +1066,7 @@ inject fields must be of non-struct kind, see Resolution), `greeterProvider`,
 `greetersProvider`, `greeterMapProvider` (R-28..R-30), `plainGreeterFunc` (R-08),
 `countingScope` (S-03), `recordingInterceptor1`, `recordingInterceptor2` (I-01, exported field 0),
 `spyInspector` (INS; `Inspect` ranges over maps, so records are sorted before comparison).
-`compat_test.go` adds `v0Module` and `v2Module` pairs that record their `Configure` calls and
+`compat_test.go` adds `rootModule` and `v2Module` pairs that record their `Configure` calls and
 carry `inject`-tagged fields of both injector types, plus variants with an `Inject` method.
 
 ### Patterns per category
@@ -1185,22 +1189,22 @@ Every case in `compat_test.go` runs both directions where both exist: a v0 modul
 a v2 injector and a v2 module on a v0 injector, as two subtests of one rule. Module identity is
 asserted by counting `Configure` calls per module value, never by comparing adapter values.
 Injection timing is asserted from inside `Configure`: the module records what its injected
-fields held when `Configure` ran, once for tagged fields and once for an `Inject` method. Facade
+fields held when `Configure` ran, once for tagged fields and once for an `Inject` method. Typed-injector
 identity uses `assert.Same`. Where a rule has two entry points on the v0 and v2 side, such as
-creating a child (`compat.Injector(engine.Child())` against `facade.Child()`), both are subtests.
+creating a child (`compat.Injector(engine.Child())` against `typed.Child()`), both are subtests.
 
 One test, X-20, is a Flamingo-shaped integration test rather than a rule: it mirrors
 `framework/config/area.go:305-340` on one engine. A v0 engine with `SetBuildEagerSingletons(false)`,
 `Bind(area{}).ToInstance(&area{})`, and config values bound under `config:` annotations; one v0
 module whose `Configure` uses `compat.Injector(...)` (adoption step 0) and declares `Depends()`;
-one `compat.ToV0(v2Module)` with an `Inject(cfg *struct{...})` method reading config inside
+one `compat.ToRoot(v2Module)` with an `Inject(cfg *struct{...})` method reading config inside
 `Configure`; both kinds contributing `BindMulti` and `BindMap` entries, one via a `ToProvider`
 taking an annotated anonymous struct. It asserts that each `Configure` runs once in dependency
 order, `Inject` runs before `Configure` with the config visible, `GetInstance[[]command]()` merges
-both origins in parent order, and `compat.Engine(compat.Injector(engine))` is the engine. Then
-`engine.Child()` on the v0 side: `compat.Injector(child)` differs from the parent facade, a v2
-module in the child receives both the v2 facade and the v0 child, a child-bound binding shadows
-the parent's, `Inspect` lists both origins and `InspectParent` receives exactly the parent facade
+both origins in parent order, and `compat.Root(compat.Injector(engine))` is the engine. Then
+`engine.Child()` on the v0 side: `compat.Injector(child)` differs from the parent typed injector, a v2
+module in the child receives both the typed API and the v0 child, a child-bound binding shadows
+the parent's, `Inspect` lists both origins and `InspectParent` receives exactly the parent typed injector
 (review decision 26).
 
 `require` for preconditions, `assert` for outcomes. `errors.Is` for sentinels; `errors.AsType[E]`
@@ -1303,7 +1307,7 @@ func ExampleInjector_Bind() {
   -coverprofile=coverage.txt` over `go list ./... | grep -Ev '/(example|miniexample)$'` inside
   `v2/`, then `go tool cover -func`. The root module keeps its ungated report.
 - No threshold on day one; every number so far is a guess. Land the suite, read the real figure,
-  commit it to `v2/coverage.min` in a follow-up. The facade is thin and every branch is a check
+  commit it to `v2/coverage.min` in a follow-up. The typed API is thin and every branch is a check
   with a test, so expect a figure well above 90%.
 - Once `v2/coverage.min` exists, the coverage job fails below it and prints the delta. Lowering
   the file takes an explicit commit that says why.
@@ -1364,14 +1368,14 @@ not lose it.
 
 ## Delivery
 
-1. Root PR, dingo branch `feat/v2-bridge` from `master`: `internal/bridge` with
-   `DingoWrappedModule`, `Innermost` and its stop conditions, `internal/typename`, the facade
+1. Root PR, dingo branch `feat/v2-naming-hooks-root` from `master`: `internal/hooks` with
+   `DingoUnwrap`, `Unwrap` and its stop conditions, `internal/typename`, the typed injector
    slot filled eagerly in `NewInjector` and `Child`, `moduleKeyOf` and `InitModules` looking
    through adapters, the pointer guard on `InitModules`' injection error, `ErrPointerToInterface`,
-   the wrapped `ErrModuleSort` cause, the tracing test, the `Innermost` test, the pointer-guard
+   the wrapped `ErrModuleSort` cause, the tracing test, the `Unwrap` test, the pointer-guard
    test, the `TestDingoCircula` rename, the `// coverage:` comments on `InitModules`' add-failure
    branch and on the sort fallback. Conventional commit `feat:`; semanticore releases it as
-   `v0.5.0`. Draft PR against `master`, no reviewers assigned; body: what the bridge is for, the
+   `v0.5.0`. Draft PR against `master`, no reviewers assigned; body: what the hooks package is for, the
    behavior-neutral claim for existing calls and how it was checked, and the one guarded path
    that only wrapped modules reach.
 2. v2 PR, dingo branch `feat/v2-generic-api` from `master` after `v0.5.0` is on the proxy: the
@@ -1402,9 +1406,9 @@ not lose it.
    and `readme_test.go` rejects v0 call shapes.
 3. 2026-09-09: `ErrPointerToInterface` is exported with the message
    `pointer to interface is not allowed`.
-4. 2026-09-09: Flamingo compatibility is a must, so v2 is a facade over the v0 engine in a `v2/`
+4. 2026-09-09: Flamingo compatibility is a must, so v2 is a typed injector over the v0 engine in a `v2/`
    module of the same repository, with `compat` adapters both ways, and the path to a standalone
-   v2 is documented above. Evidence: a prototype facade of 540 lines with 17 interop tests passing
+   v2 is documented above. Evidence: a prototype typed API of 540 lines with 17 interop tests passing
    under `-race` against the unchanged engine plus one identity hook; Flamingo's 245 `Configure`
    implementations and eight OSS modules; semanticore's version detection, read from its source
    (see review decision 7); the internal-package rule verified across modules.
@@ -1412,7 +1416,7 @@ not lose it.
    first carries the deprecation notice (notice in `v2.3.0`, removal in `v2.5.0`); compat is
    excluded from the compatibility promise from day one.
 6. 2026-09-09: injection of an adapted module happens in the engine's `InitModules`, which looks
-   through adapters with `bridge.Innermost`. Injection failures take the native error path; no
+   through adapters with `hooks.Unwrap`. Injection failures take the native error path; no
    injection hook in the bridge.
 7. 2026-09-09: root v0.x releases move to a `release/v0.x` maintenance branch once `v2.0.0`
    exists. Semanticore bases its version on the first tag it meets walking back from HEAD, not on
@@ -1437,20 +1441,20 @@ not lose it.
     unreachable for any key v2 lets through; the earlier spec text and the IDs B-31, B-32,
     OV-02, OV-03 and MB-14 pinned an error the engine never raises. The IDs keep their numbers
     with corrected statements. Adding a check would be a listed behavior change and is not
-    possible on the facade side, since an `Override` may precede the `Bind` it targets in another
+    possible on the typed injector side, since an `Override` may precede the `Bind` it targets in another
     module.
 12. 2026-09-14: the root PR pointer-guards the module type named in `InitModules`' injection
     error. `reflect.TypeOf(module).Elem()` is unconditional today and panics for a value-typed
-    module once `Innermost` is in front of it. Listed as a root change, pinned by a root test;
+    module once `Unwrap` is in front of it. Listed as a root change, pinned by a root test;
     X-19 depends on it.
 13. 2026-09-14: `BindInterceptor[T, I]` rejects an unexported field 0 at bind time (B-34a). The
     engine's `Set` on field 0 panics for it, and the suite's lowercase-fixture rule would have
     produced exactly that shape. Interceptor fixtures export field 0.
-14. 2026-09-14: the facade is attached eagerly in the root's `NewInjector` and `Child` through
-    the bridge hook, never lazily. Lazy creation would write the unsynchronized binding map from
+14. 2026-09-14: the typed injector is attached eagerly in the root's `NewInjector` and `Child` through
+    hooks.Attach, never lazily. Lazy creation would write the unsynchronized binding map from
     `compat.Injector` or `Inspect` while resolutions read it. Consequence: the `v2.Injector`
     self-binding appears in `Inspect` output as soon as v2 is linked.
-15. 2026-09-14: the bridge's unwrap method is `DingoWrappedModule() any`, `Innermost` stops on
+15. 2026-09-14: the hooks package's unwrap method is `DingoUnwrap() any`, `Unwrap` stops on
     nil, on a fixed point and at a depth cap, and a root test pins it. The unprefixed name was a
     structural interface any third-party module could match by accident, and a nil return would
     have collapsed every such module onto one key.
@@ -1489,7 +1493,7 @@ not lose it.
     uses a non-struct fixture, and the table says that only `GetInstance[Service]()` hands out a
     struct copy.
 25. 2026-09-14: `tests-v2-published` is advisory on pull requests and required on `master`, so a
-    coordinated engine-plus-facade PR can be green before the root release is on the proxy.
+    coordinated root-plus-typed-API PR can be green before the root release is on the proxy.
 26. 2026-09-14: the interop suite gains a Flamingo-shaped integration test (X-20) mirroring
     `framework/config/area.go:305-340` on one engine, and the child matrix gains the shadowing
     cell (C-05) every Flamingo per-area override relies on.

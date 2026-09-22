@@ -1,8 +1,9 @@
 // Package typename prints reflect types with their full import path.
 //
-// It is shared by the engine (module graph diagnostics) and the v2 facade (bind-time messages),
-// so that both name a type the same way. It is internal: Go's internal rule is import-path
-// based, so flamingo.me/dingo/v2 may import it while nothing outside this repository can.
+// It is shared by the root injector (module graph diagnostics) and the typed API (bind-time
+// messages), so that both name a type the same way. It is internal: Go's internal rule is
+// import-path based, so flamingo.me/dingo/v2 may import it while nothing outside this repository
+// can.
 package typename
 
 import (

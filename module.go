@@ -7,7 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	"flamingo.me/dingo/internal/bridge"
+	"flamingo.me/dingo/internal/hooks"
 	"flamingo.me/dingo/internal/typename"
 	"gonum.org/v1/gonum/graph"
 	"gonum.org/v1/gonum/graph/simple"
@@ -212,14 +212,14 @@ func (mg *modGraph) addModule(order int, module Module) (int64, error) {
 }
 
 // moduleKeyOf returns a comparable key that uniquely identifies a module. Adapters implementing
-// bridge.WrappedModule are looked through, so a module and its adapted forms are one module.
+// hooks.Unwrapper are looked through, so a module and its adapted forms are one module.
 // Ordinary modules are keyed by reflect.Type. ModuleFunc values also include the wrapped func
 // value so that distinct funcs — including distinct closures created from the same func literal —
 // remain distinct modules. A wrapped function value that is not a root Module (another package's
 // ModuleFunc) is keyed by value the same way. An unwrapped module takes exactly the path it took
 // before adapters existed.
 func moduleKeyOf(module Module) moduleKey {
-	inner := bridge.Innermost(module)
+	inner := hooks.Unwrap(module)
 	modType := reflect.TypeOf(inner)
 	key := moduleKey{typ: modType}
 
@@ -250,7 +250,7 @@ func moduleName(module Module) string {
 	return moduleKeyOf(module).name()
 }
 
-// qualifiedTypeName delegates to typename.Qualified; the printer is shared with the v2 facade.
+// qualifiedTypeName delegates to typename.Qualified; the printer is shared with the typed API.
 func qualifiedTypeName(typ reflect.Type) string {
 	return typename.Qualified(typ)
 }

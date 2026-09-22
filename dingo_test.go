@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"flamingo.me/dingo/internal/bridge"
+	"flamingo.me/dingo/internal/hooks"
 )
 
 type (
@@ -357,7 +357,7 @@ func TestInjectionOfInterfacePointer(t *testing.T) {
 }
 
 // TestInjection_PointerToInterfaceWrapsExportedSentinel pins the exported sentinel and its
-// message, which the v2 facade re-exports and matches with errors.Is.
+// message, which the typed API re-exports and matches with errors.Is.
 // Catches: a second, unexported error value being wrapped, which would make
 // errors.Is(err, dingo.ErrPointerToInterface) false for a caller of either package.
 func TestInjection_PointerToInterfaceWrapsExportedSentinel(t *testing.T) {
@@ -373,79 +373,79 @@ func TestInjection_PointerToInterfaceWrapsExportedSentinel(t *testing.T) {
 	assert.ErrorContains(t, err, "pointer to interface is not allowed")
 }
 
-// TestNewInjector_AttachesTheFacadeEagerlyAndExactlyOnce pins eager attachment: the hook runs
-// inside construction, the slot is readable through bridge.Facade, the facade is bound into the
-// engine, and a child gets exactly one facade of its own.
-// Catches: a lazily created facade writing the unsynchronized binding map after InitModules while
-// resolutions read it; and a second attachment in Child, which would append an unequal duplicate
-// binding for the facade key and make the child's next InitModules fail.
+// TestNewInjector_AttachesEagerlyAndExactlyOnce pins eager attachment: the hook runs
+// inside construction, the slot is readable through hooks.Attached, the typed injector is bound
+// into the root injector, and a child gets exactly one attached injector of its own.
+// Catches: a lazily created typed injector writing the unsynchronized binding map after
+// InitModules while resolutions read it; and a second attachment in Child, which would append an
+// unequal duplicate binding for the attached key and make the child's next InitModules fail.
 //
-//nolint:paralleltest // installs a process-wide bridge hook for its duration
-func TestNewInjector_AttachesTheFacadeEagerlyAndExactlyOnce(t *testing.T) {
-	type fakeFacade struct{ engine *Injector }
+//nolint:paralleltest // installs a process-wide hooks.Attach for its duration
+func TestNewInjector_AttachesEagerlyAndExactlyOnce(t *testing.T) {
+	type fakeAttached struct{ root *Injector }
 
 	var created []*Injector
 
-	previous := bridge.NewFacade
-	bridge.NewFacade = func(engine any) any {
-		e, ok := engine.(*Injector)
+	previous := hooks.Attach
+	hooks.Attach = func(root any) any {
+		e, ok := root.(*Injector)
 		require.True(t, ok)
 
 		created = append(created, e)
-		facade := &fakeFacade{engine: e}
-		e.Bind(fakeFacade{}).ToInstance(facade)
+		attached := &fakeAttached{root: e}
+		e.Bind(fakeAttached{}).ToInstance(attached)
 
-		return facade
+		return attached
 	}
 
-	t.Cleanup(func() { bridge.NewFacade = previous })
+	t.Cleanup(func() { hooks.Attach = previous })
 
 	injector, err := NewInjector()
 	require.NoError(t, err)
 	require.Len(t, created, 1)
 	assert.Same(t, injector, created[0])
 
-	facade, ok := bridge.Facade(injector).(*fakeFacade)
+	attached, ok := hooks.Attached(injector).(*fakeAttached)
 	require.True(t, ok)
-	assert.Same(t, injector, facade.engine)
+	assert.Same(t, injector, attached.root)
 
-	bound, err := injector.GetInstance(new(fakeFacade))
+	bound, err := injector.GetInstance(new(fakeAttached))
 	require.NoError(t, err)
-	assert.Same(t, facade, bound)
+	assert.Same(t, attached, bound)
 
 	child, err := injector.Child()
 	require.NoError(t, err)
-	require.Len(t, created, 2, "Child attaches exactly one facade, through the NewInjector it calls")
+	require.Len(t, created, 2, "Child attaches exactly once, through the NewInjector it calls")
 
-	childFacade, ok := bridge.Facade(child).(*fakeFacade)
+	childAttached, ok := hooks.Attached(child).(*fakeAttached)
 	require.True(t, ok)
-	assert.Same(t, child, childFacade.engine)
-	assert.NotSame(t, facade, childFacade)
+	assert.Same(t, child, childAttached.root)
+	assert.NotSame(t, attached, childAttached)
 
-	// the child holds exactly one binding for the facade key, so a later InitModules on it (what
+	// the child holds exactly one binding for the attached key, so a later InitModules on it (what
 	// Flamingo does per config area) does not hit the duplicate-binding check
 	bindings := 0
 
 	child.Inspect(Inspector{InspectBinding: func(of reflect.Type, _ string, _ reflect.Type, _, _ *reflect.Value, _ Scope) {
-		if of == reflect.TypeOf(fakeFacade{}) {
+		if of == reflect.TypeOf(fakeAttached{}) {
 			bindings++
 		}
 	}})
 	assert.Equal(t, 1, bindings)
 	require.NoError(t, child.InitModules())
 
-	assert.Nil(t, bridge.Facade(nil))
-	assert.Nil(t, bridge.Facade((*Injector)(nil)))
-	assert.Nil(t, bridge.Facade("not an engine"))
+	assert.Nil(t, hooks.Attached(nil))
+	assert.Nil(t, hooks.Attached((*Injector)(nil)))
+	assert.Nil(t, hooks.Attached("not a root injector"))
 }
 
-// wrappedModule is a minimal module adapter: it implements bridge.WrappedModule structurally and
-// forwards nothing else, so the engine's Innermost path is what these tests exercise.
+// wrappedModule is a minimal module adapter: it implements hooks.Unwrapper structurally and
+// forwards nothing else, so the root injector's Unwrap path is what these tests exercise.
 type wrappedModule struct{ inner any }
 
 func (w *wrappedModule) Configure(*Injector) {}
 
-func (w *wrappedModule) DingoWrappedModule() any { return w.inner }
+func (w *wrappedModule) DingoUnwrap() any { return w.inner }
 
 // valueModuleWithUnresolvableField is a value-typed module whose inject field cannot be resolved,
 // so injection fails before any field is set. A value-typed module reaching the error branch is
@@ -460,7 +460,7 @@ func (valueModuleWithUnresolvableField) Configure(*Injector) {}
 // named in InitModules' injection error (review decision 12).
 // Catches: reflect.TypeOf(module).Elem() on a value-typed module panicking with "reflect: Elem of
 // invalid type", which today turns a reportable injection failure into a panic and which
-// bridge.Innermost would otherwise make reachable for every adapted value module.
+// hooks.Unwrap would otherwise make reachable for every adapted value module.
 func TestInitModules_NamesAValueTypedModuleWithoutPanicking(t *testing.T) {
 	t.Parallel()
 
@@ -489,11 +489,11 @@ func TestInitModules_NamesAValueTypedModuleWithoutPanicking(t *testing.T) {
 	}
 }
 
-// TestInitModules_InjectsTheInnermostModule pins that a wrapped module's fields are set before
+// TestInitModules_InjectsTheUnwrappedModule pins that a wrapped module's fields are set before
 // Configure, on the inner value rather than on the adapter.
 // Catches: an adapter being injected instead of the module it wraps, which leaves every adapted
 // module's dependencies nil inside Configure.
-func TestInitModules_InjectsTheInnermostModule(t *testing.T) {
+func TestInitModules_InjectsTheUnwrappedModule(t *testing.T) {
 	t.Parallel()
 
 	injector, err := NewInjector()
