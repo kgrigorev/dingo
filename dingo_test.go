@@ -344,8 +344,8 @@ type someStructWithInvalidInterfacePointer struct {
 	A *testInterface `inject:""`
 }
 
-// TestInjectionOfInterfacePointer pins the pointer-to-interface rejection, the exported
-// ErrPointerToInterface sentinel (matched via errors.Is by the typed API), and the message carve-out.
+// TestInjectionOfInterfacePointer pins rejection of pointer-to-interface fields, the exported
+// ErrPointerToInterface sentinel (errors.Is for the typed API), and the error message text.
 func TestInjectionOfInterfacePointer(t *testing.T) {
 	t.Parallel()
 
@@ -359,14 +359,13 @@ func TestInjectionOfInterfacePointer(t *testing.T) {
 	assert.ErrorContains(t, err, "pointer to interface is not allowed")
 }
 
-// TestNewInjector_AttachesEagerlyAndExactlyOnce pins eager attachment: the hook runs
-// inside construction, the slot is readable through hooks.Attached, the typed injector is bound
-// into the root injector, and a child gets exactly one attached injector of its own.
-// Catches: a lazily created typed injector writing the unsynchronized binding map after
-// InitModules while resolutions read it; and a second attachment in Child, which would append an
-// unequal duplicate binding for the attached key and make the child's next InitModules fail.
+// TestNewInjector_AttachesEagerlyAndExactlyOnce pins that Attach runs during NewInjector, that
+// hooks.Attached can read the slot, that the typed injector is bound on the root, and that a child
+// gets exactly one attached injector.
+// Catches: lazy attach racing the binding map after InitModules; a second Attach in Child adding a
+// duplicate binding and failing the child's next InitModules.
 //
-//nolint:paralleltest // installs a process-wide hooks.Attach for its duration
+//nolint:paralleltest // installs a process-wide hooks.Attach for the duration of the test
 func TestNewInjector_AttachesEagerlyAndExactlyOnce(t *testing.T) {
 	type fakeAttached struct{ root *Injector }
 
@@ -408,8 +407,7 @@ func TestNewInjector_AttachesEagerlyAndExactlyOnce(t *testing.T) {
 	assert.Same(t, child, childAttached.root)
 	assert.NotSame(t, attached, childAttached)
 
-	// the child holds exactly one binding for the attached key, so a later InitModules on it (what
-	// Flamingo does per config area) does not hit the duplicate-binding check
+	// one binding for the attached key — Flamingo calls InitModules per config area and must not hit duplicates
 	bindings := 0
 
 	child.Inspect(Inspector{InspectBinding: func(of reflect.Type, _ string, _ reflect.Type, _, _ *reflect.Value, _ Scope) {
@@ -425,28 +423,25 @@ func TestNewInjector_AttachesEagerlyAndExactlyOnce(t *testing.T) {
 	assert.Nil(t, hooks.Attached("not a root injector"))
 }
 
-// wrappedModule is a minimal module adapter: it implements hooks.Unwrapper structurally and
-// forwards nothing else, so the root injector's Unwrap path is what these tests exercise.
+// wrappedModule is a minimal Unwrapper adapter; tests use it to exercise the root Unwrap path.
 type wrappedModule struct{ inner any }
 
 func (w *wrappedModule) Configure(*Injector) {}
 
 func (w *wrappedModule) DingoUnwrap() any { return w.inner }
 
-// valueModuleWithUnresolvableField is a value-typed module whose inject field cannot be resolved,
-// so injection fails before any field is set. A value-typed module reaching the error branch is
-// what makes the unguarded reflect.TypeOf(module).Elem() panic.
+// valueModuleWithUnresolvableField is a value module with an unbound inject field, so InitModules
+// fails before fields are set. Naming that module with reflect.Type.Elem() panics on a non-pointer.
 type valueModuleWithUnresolvableField struct {
 	Missing testInterface `inject:"nobody-binds-this"`
 }
 
 func (valueModuleWithUnresolvableField) Configure(*Injector) {}
 
-// TestInitModules_NamesAValueTypedModuleWithoutPanicking pins the pointer guard on the module type
-// named in InitModules' injection error (review decision 12).
-// Catches: reflect.TypeOf(module).Elem() on a value-typed module panicking with "reflect: Elem of
-// invalid type", which today turns a reportable injection failure into a panic and which
-// hooks.Unwrap would otherwise make reachable for every adapted value module.
+// TestInitModules_NamesAValueTypedModuleWithoutPanicking pins the pointer guard when naming the
+// module in an InitModules injection error (review decision 12).
+// Catches: Type.Elem() on a value module panicking ("reflect: Elem of invalid type"), turning a
+// normal error into a panic — and Unwrap would make that path reachable for every adapted value module.
 func TestInitModules_NamesAValueTypedModuleWithoutPanicking(t *testing.T) {
 	t.Parallel()
 
@@ -475,10 +470,9 @@ func TestInitModules_NamesAValueTypedModuleWithoutPanicking(t *testing.T) {
 	}
 }
 
-// TestInitModules_InjectsTheUnwrappedModule pins that a wrapped module's fields are set before
-// Configure, on the inner value rather than on the adapter.
-// Catches: an adapter being injected instead of the module it wraps, which leaves every adapted
-// module's dependencies nil inside Configure.
+// TestInitModules_InjectsTheUnwrappedModule pins that wrapped modules get fields injected on the
+// inner value before Configure, not on the adapter.
+// Catches: injecting the adapter instead, which leaves adapted modules' dependencies nil in Configure.
 func TestInitModules_InjectsTheUnwrappedModule(t *testing.T) {
 	t.Parallel()
 

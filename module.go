@@ -211,13 +211,12 @@ func (mg *modGraph) addModule(order int, module Module) (int64, error) {
 	return newNode.ID(), nil
 }
 
-// moduleKeyOf returns a comparable key that uniquely identifies a module. Adapters implementing
-// hooks.Unwrapper are looked through, so a module and its adapted forms are one module.
+// moduleKeyOf returns a comparable key that uniquely identifies a module. Adapters that implement
+// hooks.Unwrapper are unwrapped first, so a module and its adapted forms share one key.
 // Ordinary modules are keyed by reflect.Type. ModuleFunc values also include the wrapped func
 // value so that distinct funcs — including distinct closures created from the same func literal —
-// remain distinct modules. A wrapped function value that is not a root Module (another package's
-// ModuleFunc) is keyed by value the same way. An unwrapped module takes exactly the path it took
-// before adapters existed.
+// remain distinct modules. A wrapped function that is not a root Module (for example a v2
+// ModuleFunc) is keyed by value the same way. Without an adapter, the key matches the pre-adapter path.
 func moduleKeyOf(module Module) moduleKey {
 	inner := hooks.Unwrap(module)
 	modType := reflect.TypeOf(inner)
@@ -250,7 +249,7 @@ func moduleName(module Module) string {
 	return moduleKeyOf(module).name()
 }
 
-// qualifiedTypeName delegates to typename.Qualified; the printer is shared with the typed API.
+// qualifiedTypeName calls typename.Qualified (shared with the typed API).
 func qualifiedTypeName(typ reflect.Type) string {
 	return typename.Qualified(typ)
 }

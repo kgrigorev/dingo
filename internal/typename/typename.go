@@ -1,9 +1,7 @@
-// Package typename prints reflect types with their full import path.
+// Package typename formats reflect types with their full import path.
 //
-// It is shared by the root injector (module graph diagnostics) and the typed API (bind-time
-// messages), so that both name a type the same way. It is internal: Go's internal rule is
-// import-path based, so flamingo.me/dingo/v2 may import it while nothing outside this repository
-// can.
+// The root injector (module graph errors) and the typed API (bind-time messages) share it so both
+// print the same type name. It is under internal/, so only this repository can import it.
 package typename
 
 import (
@@ -11,17 +9,16 @@ import (
 	"reflect"
 )
 
-// Qualified is like reflect.Type.String but uses the full import path instead of the short
-// package name for named types. It handles common composite types recursively (pointer, slice,
-// array, map, channel) so that any named element or key type inside them is also fully
-// qualified. Anonymous composite types (struct, interface, func) fall back to
-// reflect.Type.String, as does anything else not covered above.
+// Qualified is like reflect.Type.String, but named types use the full import path instead of the
+// short package name. Pointer, slice, array, map, and channel types are walked so named parts
+// inside them are fully qualified too. Anonymous structs, interfaces, funcs, and anything else
+// fall back to reflect.Type.String.
 func Qualified(typ reflect.Type) string {
 	if typ.PkgPath() != "" {
 		return typ.PkgPath() + "." + typ.Name()
 	}
 
-	//nolint:exhaustive // only kinds that can wrap a named type are qualified, everything else falls back to reflect.Type.String
+	//nolint:exhaustive // only kinds that can wrap a named type are qualified; others use reflect.Type.String
 	switch typ.Kind() {
 	case reflect.Pointer:
 		return "*" + Qualified(typ.Elem())
