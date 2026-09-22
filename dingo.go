@@ -24,8 +24,6 @@ var (
 	// ErrPointerToInterface is wrapped by the injection error for a pointer-to-interface field,
 	// and by the typed API's GetInstance for a pointer-to-interface request.
 	ErrPointerToInterface = errors.New("pointer to interface is not allowed")
-	// errPointersToInterface keeps the old name so that a grep for it still finds the declaration.
-	errPointersToInterface = ErrPointerToInterface
 
 	traceCircular    []circularTraceEntry
 	injectionTracing = false
@@ -830,7 +828,7 @@ func (injector *Injector) requestInjection(object interface{}, circularTrace []c
 						field.Set(instance.Elem())
 					} else {
 						if field.Kind() == reflect.Pointer && field.Type().Kind() == reflect.Pointer && field.Type().Elem().Kind() == reflect.Interface {
-							return wrapErr(fmt.Errorf("field %#v is pointer to interface. %w", currentFieldName, errPointersToInterface))
+							return wrapErr(fmt.Errorf("field %#v is pointer to interface. %w", currentFieldName, ErrPointerToInterface))
 						}
 
 						if injectionTracing {

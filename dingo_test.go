@@ -344,23 +344,9 @@ type someStructWithInvalidInterfacePointer struct {
 	A *testInterface `inject:""`
 }
 
+// TestInjectionOfInterfacePointer pins the pointer-to-interface rejection, the exported
+// ErrPointerToInterface sentinel (matched via errors.Is by the typed API), and the message carve-out.
 func TestInjectionOfInterfacePointer(t *testing.T) {
-	t.Parallel()
-
-	injector, err := NewInjector()
-	assert.NoError(t, err)
-
-	injector.Bind((*testInterface)(nil)).To(interfaceImpl1{})
-
-	_, err = injector.GetInstance(new(someStructWithInvalidInterfacePointer))
-	assert.Error(t, err, "Expected error")
-}
-
-// TestInjection_PointerToInterfaceWrapsExportedSentinel pins the exported sentinel and its
-// message, which the typed API re-exports and matches with errors.Is.
-// Catches: a second, unexported error value being wrapped, which would make
-// errors.Is(err, dingo.ErrPointerToInterface) false for a caller of either package.
-func TestInjection_PointerToInterfaceWrapsExportedSentinel(t *testing.T) {
 	t.Parallel()
 
 	injector, err := NewInjector()
@@ -388,12 +374,12 @@ func TestNewInjector_AttachesEagerlyAndExactlyOnce(t *testing.T) {
 
 	previous := hooks.Attach
 	hooks.Attach = func(root any) any {
-		e, ok := root.(*Injector)
+		injector, ok := root.(*Injector)
 		require.True(t, ok)
 
-		created = append(created, e)
-		attached := &fakeAttached{root: e}
-		e.Bind(fakeAttached{}).ToInstance(attached)
+		created = append(created, injector)
+		attached := &fakeAttached{root: injector}
+		injector.Bind(fakeAttached{}).ToInstance(attached)
 
 		return attached
 	}
