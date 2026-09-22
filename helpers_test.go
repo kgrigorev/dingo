@@ -17,7 +17,9 @@ var privateSingletons sync.Map
 // newInjector returns an injector with private Singleton and ChildSingleton caches.
 //
 // NewInjector is called with no modules so eager construction cannot land in the
-// package-level scopes. The private scopes are registered next, then modules initialize.
+// package-level scopes. The private scopes are registered next. InitModules is
+// called with an empty list so a later eager binding cannot rebuild against the
+// package-level Singleton.
 func newInjector(t *testing.T) *dingo.Injector {
 	t.Helper()
 
