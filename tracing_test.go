@@ -1,4 +1,4 @@
-//nolint:testpackage // white-box test accessing package-level EnableInjectionTracing
+//nolint:testpackage // white-box: needs package-level EnableInjectionTracing
 package dingo
 
 import (
@@ -16,10 +16,9 @@ type tracedTarget struct {
 	Dependency *tracedDependency `inject:""`
 }
 
-// TestInjectionTracing_LogsFieldSetsAndResolutionsWhenEnabled pins R-27: the switch makes the
-// engine emit one slog line per field set ("SETTING FIELD") and per resolution ("INJECTING").
-// Catches: the switch being read but never acted on, which would make the only debugging aid for
-// a mis-wired graph silently useless.
+// TestInjectionTracing_LogsFieldSetsAndResolutionsWhenEnabled checks R-27.
+// With the switch on, each field set and each resolution logs one slog line.
+// If the switch is only read and never used, debugging stays silent.
 //
 //nolint:paralleltest // swaps the process-wide slog default and the package-level tracing switch
 func TestInjectionTracing_LogsFieldSetsAndResolutionsWhenEnabled(t *testing.T) {

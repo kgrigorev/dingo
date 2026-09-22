@@ -21,8 +21,8 @@ const (
 var (
 	ErrInitModules           = errors.New("initialization of modules failed")
 	ErrInvalidInjectReceiver = errors.New("usage of 'Inject' method with struct receiver is not allowed")
-	// ErrPointerToInterface is wrapped by the injection error for a pointer-to-interface field,
-	// and by the typed API's GetInstance for a pointer-to-interface request.
+	// ErrPointerToInterface is wrapped for pointer-to-interface inject fields.
+	// The typed API's GetInstance wraps it too when asked for a pointer to an interface.
 	ErrPointerToInterface = errors.New("pointer to interface is not allowed")
 
 	traceCircular    []circularTraceEntry
@@ -99,7 +99,7 @@ func NewInjector(modules ...Module) (*Injector, error) {
 	injector.BindScope(Singleton)
 	injector.BindScope(ChildSingleton)
 
-	// attach the typed injector when the v2 package is linked into the binary
+	// attach the typed injector when v2 is in the binary
 	injector.attach()
 
 	// init current modules
@@ -124,14 +124,16 @@ func (injector *Injector) Child() (*Injector, error) {
 	return newInjector, nil
 }
 
-// attach fills the attached slot through the hooks package when the v2 package is linked. It
-// runs inside NewInjector, before any module, so the binding the hook adds never races a
-// resolution; a lazily created typed injector would write the unsynchronized binding map from
-// compat.Injector or Inspect while resolutions read it.
+// attach stores the typed injector through hooks, if v2 is linked.
+// NewInjector calls this before any module runs.
+// That way the new binding is not written while another goroutine resolves instances.
 //
-// It is idempotent by design: Child() builds its root injector with NewInjector, so a child is
-// attached there and exactly once. A second attachment would bind a second, unequal typed
-// injector for the same key and break the child's next InitModules.
+// Do not attach late. A lazy attach can race with GetInstance
+// (compat.Injector or Inspect writing the binding map).
+//
+// Attach only once. Child() already goes through NewInjector, so the child is attached there.
+// A second Attach would add a second binding for the same key.
+// Then the child's next InitModules fails — Flamingo calls InitModules per config area.
 func (injector *Injector) attach() {
 	if injector.attached != nil || hooks.Attach == nil {
 		return
@@ -217,10 +219,10 @@ func (injector *Injector) InitModules(modules ...Module) error {
 	return injector.BuildEagerSingletons(false)
 }
 
-// moduleTypeName names the unwrapped module's type for InitModules' injection error. It strips one
-// pointer level only when there is one, so a value-typed module (MyModule{}, a ModuleFunc, or any
-// value module behind an adapter) does not panic on reflect.Type.Elem. For the pointer modules
-// every existing caller passes, the result is the same "<import path>.<Name>" as before.
+// moduleTypeName is the type name used in InitModules injection errors.
+// We unwrap adapters first.
+// We only call Elem on pointer types, so a value module does not panic.
+// Pointer modules still print as "<import path>.<Name>".
 func moduleTypeName(module Module) string {
 	typ := reflect.TypeOf(hooks.Unwrap(module))
 	if typ.Kind() == reflect.Pointer {
