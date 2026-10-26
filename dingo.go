@@ -122,14 +122,10 @@ func (injector *Injector) InitModules(modules ...Module) error {
 	}
 
 	for _, module := range modules {
-		injector.currentModule = module
-		if err := injector.requestInjection(module, traceCircular); err != nil {
-			erroredModule := reflect.TypeOf(module).Elem()
-			return fmt.Errorf("initmodules: injection into %q failed: %w", erroredModule.PkgPath()+"."+erroredModule.Name(), err)
+		if err := injector.initModule(module); err != nil {
+			return err
 		}
-		module.Configure(injector)
 	}
-	injector.currentModule = nil
 
 	// evaluate overrides when modules were loaded
 	for _, override := range injector.overrides {
@@ -182,6 +178,25 @@ func (injector *Injector) InitModules(modules ...Module) error {
 		return nil
 	}
 	return injector.BuildEagerSingletons(false)
+}
+
+// initModule injects into the module and configures it. Every binding created
+// meanwhile records the module as its declaring module. The previous module is
+// restored afterwards, also on errors, panics and nested InitModules calls.
+func (injector *Injector) initModule(module Module) error {
+	previous := injector.currentModule
+	injector.currentModule = module
+
+	defer func() { injector.currentModule = previous }()
+
+	if err := injector.requestInjection(module, traceCircular); err != nil {
+		erroredModule := reflect.TypeOf(module).Elem()
+		return fmt.Errorf("initmodules: injection into %q failed: %w", erroredModule.PkgPath()+"."+erroredModule.Name(), err)
+	}
+
+	module.Configure(injector)
+
+	return nil
 }
 
 // SetBuildEagerSingletons can be used to disable or enable building of eager singletons during InitModules

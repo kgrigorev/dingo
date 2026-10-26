@@ -20,6 +20,19 @@ type (
 	// two instances never compare equal and tests can define bindings inline.
 	declaringModuleA struct{ configure func(*Injector) }
 	declaringModuleB struct{ configure func(*Injector) }
+
+	// declaringInjectedModule binds from its Inject method as well.
+	declaringInjectedModule struct {
+		inject, configure func(*Injector)
+	}
+
+	// declaringUnresolvableModule fails injection, so it is never configured.
+	declaringUnresolvableModule struct {
+		Missing declaringIface `inject:""`
+	}
+
+	// declaringDelayed binds while its delayed injection runs.
+	declaringDelayed struct{ inject func(*Injector) }
 )
 
 func (*declaringImpl) declared()      {}
@@ -27,6 +40,13 @@ func (*declaringOtherImpl) declared() {}
 
 func (m *declaringModuleA) Configure(injector *Injector) { m.configure(injector) }
 func (m *declaringModuleB) Configure(injector *Injector) { m.configure(injector) }
+
+func (m *declaringInjectedModule) Inject(injector *Injector)    { m.inject(injector) }
+func (m *declaringInjectedModule) Configure(injector *Injector) { m.configure(injector) }
+
+func (*declaringUnresolvableModule) Configure(*Injector) {}
+
+func (d *declaringDelayed) Inject(injector *Injector) { d.inject(injector) }
 
 func TestInitModules_DeclaringModule(t *testing.T) {
 	t.Parallel()
@@ -130,6 +150,46 @@ func TestInitModules_DeclaringModule(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "bindings made while a module is injected record that module",
+			setup: func() ([]Module, map[string]Module) {
+				m := &declaringInjectedModule{
+					inject: func(injector *Injector) {
+						injector.Bind(new(int)).ToInstance(1)
+					},
+					configure: func(injector *Injector) {
+						injector.Bind(new(string)).ToInstance("configured")
+					},
+				}
+
+				return []Module{m}, map[string]Module{
+					"Bind dingo.Injector[0]": nil,
+					"Bind int[0]":            m,
+					"Bind string[0]":         m,
+				}
+			},
+		},
+		{
+			name: "a nested InitModules restores the outer module",
+			setup: func() ([]Module, map[string]Module) {
+				inner := &declaringModuleB{configure: func(injector *Injector) {
+					injector.Bind(new(int)).ToInstance(1)
+				}}
+				outer := &declaringModuleA{configure: func(injector *Injector) {
+					if err := injector.InitModules(inner); err != nil {
+						panic(err)
+					}
+
+					injector.Bind(new(string)).ToInstance("outer")
+				}}
+
+				return []Module{outer}, map[string]Module{
+					"Bind dingo.Injector[0]": nil,
+					"Bind int[0]":            inner,
+					"Bind string[0]":         outer,
+				}
+			},
+		},
 	}
 
 	for _, test := range tests {
@@ -140,6 +200,194 @@ func TestInitModules_DeclaringModule(t *testing.T) {
 
 			injector, err := NewInjector(modules...)
 			require.NoError(t, err)
+
+			assertDeclaringModules(t, want, declaringModulesOf(injector))
+		})
+	}
+}
+
+func TestChild_DeclaringModule(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a child records its own modules and the parent keeps its own", func(t *testing.T) {
+		t.Parallel()
+
+		a := &declaringModuleA{configure: func(injector *Injector) {
+			injector.Bind(new(string)).ToInstance("parent")
+		}}
+		b := &declaringModuleB{configure: func(injector *Injector) {
+			injector.Bind(new(string)).ToInstance("child")
+			injector.BindMulti(new(string)).ToInstance("child")
+			injector.BindMap(new(string), "child").ToInstance("child")
+		}}
+
+		parent, err := NewInjector(a)
+		require.NoError(t, err)
+
+		child, err := parent.Child()
+		require.NoError(t, err)
+		require.NoError(t, child.InitModules(b))
+
+		assertDeclaringModules(t, map[string]Module{
+			"Bind dingo.Injector[0]": nil,
+			"Bind string[0]":         a,
+		}, declaringModulesOf(parent))
+		assertDeclaringModules(t, map[string]Module{
+			"Bind dingo.Injector[0]":  nil,
+			"Bind dingo.Injector[1]":  nil,
+			"Bind string[0]":          b,
+			"BindMulti string[0]":     b,
+			`BindMap string["child"]`: b,
+		}, declaringModulesOf(child))
+	})
+
+	t.Run("a child created during a module's configuration records none", func(t *testing.T) {
+		t.Parallel()
+
+		var child *Injector
+
+		a := &declaringModuleA{configure: func(injector *Injector) {
+			var err error
+			if child, err = injector.Child(); err != nil {
+				panic(err)
+			}
+
+			injector.Bind(new(string)).ToInstance("parent")
+		}}
+
+		parent, err := NewInjector(a)
+		require.NoError(t, err)
+
+		assertDeclaringModules(t, map[string]Module{
+			"Bind dingo.Injector[0]": nil,
+			"Bind string[0]":         a,
+		}, declaringModulesOf(parent))
+		assertDeclaringModules(t, map[string]Module{
+			"Bind dingo.Injector[0]": nil,
+			"Bind dingo.Injector[1]": nil,
+		}, declaringModulesOf(child))
+	})
+}
+
+func TestInitModules_BindingsOutsideModuleConfigurationHaveNoDeclaringModule(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		// setup returns an injector that bound a string outside of any
+		// module's configuration, and the expected declaring modules.
+		setup func(t *testing.T) (*Injector, map[string]Module)
+	}{
+		{
+			name: "bound directly on the injector",
+			setup: func(t *testing.T) (*Injector, map[string]Module) {
+				t.Helper()
+
+				injector, err := NewInjector()
+				require.NoError(t, err)
+
+				injector.Bind(new(string)).ToInstance("direct")
+
+				return injector, map[string]Module{
+					"Bind dingo.Injector[0]": nil,
+					"Bind string[0]":         nil,
+				}
+			},
+		},
+		{
+			name: "bound by a delayed injection",
+			setup: func(t *testing.T) (*Injector, map[string]Module) {
+				t.Helper()
+
+				a := &declaringModuleA{configure: func(injector *Injector) {
+					injector.Bind(new(int)).ToInstance(1)
+
+					delayed := &declaringDelayed{inject: func(injector *Injector) {
+						injector.Bind(new(string)).ToInstance("delayed")
+					}}
+					if err := injector.RequestInjection(delayed); err != nil {
+						panic(err)
+					}
+				}}
+
+				injector, err := NewInjector(a)
+				require.NoError(t, err)
+
+				return injector, map[string]Module{
+					"Bind dingo.Injector[0]": nil,
+					"Bind int[0]":            a,
+					"Bind string[0]":         nil,
+				}
+			},
+		},
+		{
+			name: "bound by the provider of an eager singleton",
+			setup: func(t *testing.T) (*Injector, map[string]Module) {
+				t.Helper()
+
+				a := &declaringModuleA{configure: func(injector *Injector) {
+					injector.Bind(new(int)).ToProvider(func(injector *Injector) int {
+						injector.Bind(new(string)).ToInstance("eager")
+
+						return 1
+					}).AsEagerSingleton()
+				}}
+
+				injector, err := NewInjector(a)
+				require.NoError(t, err)
+
+				return injector, map[string]Module{
+					"Bind dingo.Injector[0]": nil,
+					"Bind int[0]":            a,
+					"Bind string[0]":         nil,
+				}
+			},
+		},
+		{
+			name: "bound after a module failed injection",
+			setup: func(t *testing.T) (*Injector, map[string]Module) {
+				t.Helper()
+
+				injector, err := NewInjector()
+				require.NoError(t, err)
+				require.Error(t, injector.InitModules(new(declaringUnresolvableModule)))
+
+				injector.Bind(new(string)).ToInstance("after error")
+
+				return injector, map[string]Module{
+					"Bind dingo.Injector[0]": nil,
+					"Bind string[0]":         nil,
+				}
+			},
+		},
+		{
+			name: "bound after a module's configuration panicked",
+			setup: func(t *testing.T) (*Injector, map[string]Module) {
+				t.Helper()
+
+				injector, err := NewInjector()
+				require.NoError(t, err)
+
+				a := &declaringModuleA{configure: func(injector *Injector) {
+					injector.Bind(nil)
+				}}
+				require.Panics(t, func() { _ = injector.InitModules(a) })
+
+				injector.Bind(new(string)).ToInstance("after panic")
+
+				return injector, map[string]Module{
+					"Bind dingo.Injector[0]": nil,
+					"Bind string[0]":         nil,
+				}
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			injector, want := test.setup(t)
 
 			assertDeclaringModules(t, want, declaringModulesOf(injector))
 		})
