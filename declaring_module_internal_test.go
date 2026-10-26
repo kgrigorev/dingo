@@ -333,8 +333,13 @@ func TestInitModules_BindingsOutsideModuleConfigurationHaveNoDeclaringModule(t *
 					}).AsEagerSingleton()
 				}}
 
-				injector, err := NewInjector(a)
+				injector, err := NewInjector()
 				require.NoError(t, err)
+
+				// The global Singleton scope would cache the instance across
+				// test runs and skip the provider, so use a scope of our own.
+				injector.BindScope(NewSingletonScope())
+				require.NoError(t, injector.InitModules(a))
 
 				return injector, map[string]Module{
 					"Bind dingo.Injector[0]": nil,
