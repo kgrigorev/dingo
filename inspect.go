@@ -2,9 +2,12 @@ package dingo
 
 import "reflect"
 
-// Inspector defines callbacks called during injector inspection
+// Inspector defines callbacks called during injector inspection.
+// declaredBy is the module whose initialization created the binding.
+// It is nil if that is unknown, because the binding was created outside of
+// module initialization, like the injector's own binding.
 type Inspector struct {
-	InspectBinding      func(of reflect.Type, annotation string, to reflect.Type, provider, instance *reflect.Value, in Scope)
+	InspectBinding      func(of reflect.Type, annotation string, to reflect.Type, provider, instance *reflect.Value, in Scope, declaredBy Module)
 	InspectMultiBinding func(of reflect.Type, index int, annotation string, to reflect.Type, provider, instance *reflect.Value, in Scope)
 	InspectMapBinding   func(of reflect.Type, key string, annotation string, to reflect.Type, provider, instance *reflect.Value, in Scope)
 	InspectParent       func(parent *Injector)
@@ -23,7 +26,8 @@ func (injector *Injector) Inspect(inspector Inspector) {
 				if binding.instance != nil {
 					ival = &binding.instance.ivalue
 				}
-				inspector.InspectBinding(t, binding.annotatedWith, binding.to, pfnc, ival, binding.scope)
+
+				inspector.InspectBinding(t, binding.annotatedWith, binding.to, pfnc, ival, binding.scope, binding.declaredBy)
 			}
 		}
 	}
