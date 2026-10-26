@@ -237,6 +237,16 @@ func moduleName(module Module) string {
 	return moduleKeyOf(module).name()
 }
 
+// declaringModuleName names the module that declared a binding, or returns
+// "unknown" if the binding was created outside of module initialization.
+func declaringModuleName(module Module) string {
+	if module == nil {
+		return "unknown"
+	}
+
+	return moduleName(module)
+}
+
 // qualifiedTypeName is like reflect.Type.String but uses the full import path
 // instead of the short package name for named types. It handles common
 // composite types recursively (pointer, slice, array, map, channel) so that

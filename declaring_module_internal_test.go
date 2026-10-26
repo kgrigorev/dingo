@@ -69,7 +69,7 @@ func TestInitModules_DeclaringModule(t *testing.T) {
 				}}
 
 				return []Module{a, b}, map[string]Module{
-					"Bind dingo.Injector[0]":      nil,
+					"Bind dingo.Injector[0]":       nil,
 					"Bind dingo.declaringIface[0]": a,
 					"Bind string[0]":               a,
 					"Bind int[0]":                  b,
@@ -89,7 +89,7 @@ func TestInitModules_DeclaringModule(t *testing.T) {
 				}}
 
 				return []Module{a, b}, map[string]Module{
-					"Bind dingo.Injector[0]":           nil,
+					"Bind dingo.Injector[0]":            nil,
 					"BindMulti dingo.declaringIface[0]": a,
 					"BindMulti dingo.declaringIface[1]": b,
 					`BindMap string["a"]`:               a,
@@ -371,6 +371,7 @@ func TestInitModules_BindingsOutsideModuleConfigurationHaveNoDeclaringModule(t *
 				a := &declaringModuleA{configure: func(injector *Injector) {
 					injector.Bind(nil)
 				}}
+
 				require.Panics(t, func() { _ = injector.InitModules(a) })
 
 				injector.Bind(new(string)).ToInstance("after panic")
@@ -390,6 +391,64 @@ func TestInitModules_BindingsOutsideModuleConfigurationHaveNoDeclaringModule(t *
 			injector, want := test.setup(t)
 
 			assertDeclaringModules(t, want, declaringModulesOf(injector))
+		})
+	}
+}
+
+func TestInitModules_DuplicateBindingErrorNamesTheDeclaringModules(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		init func(t *testing.T) error
+		want string
+	}{
+		{
+			name: "both bindings declared by modules",
+			init: func(t *testing.T) error {
+				t.Helper()
+
+				a := &declaringModuleA{configure: func(injector *Injector) {
+					injector.Bind(new(declaringIface)).To(declaringImpl{})
+				}}
+				b := &declaringModuleB{configure: func(injector *Injector) {
+					injector.Bind(new(declaringIface)).To(declaringOtherImpl{})
+				}}
+
+				_, err := NewInjector(a, b)
+
+				return err
+			},
+			want: `already known binding for "dingo.declaringIface" with annotation "" | ` +
+				`Known binding: "\"flamingo.me/dingo\"\"declaringImpl\"" Try "\"flamingo.me/dingo\"\"declaringOtherImpl\"" | ` +
+				`Known binding declared by *flamingo.me/dingo.declaringModuleA, duplicate declared by *flamingo.me/dingo.declaringModuleB`,
+		},
+		{
+			name: "a binding without a declaring module is named unknown",
+			init: func(t *testing.T) error {
+				t.Helper()
+
+				injector, err := NewInjector()
+				require.NoError(t, err)
+
+				injector.Bind(new(string)).ToInstance("direct")
+
+				b := &declaringModuleB{configure: func(injector *Injector) {
+					injector.Bind(new(string)).ToInstance("b")
+				}}
+
+				return injector.InitModules(b)
+			},
+			want: `already known binding for "string" with annotation "" | Known binding: "" Try "" | ` +
+				`Known binding declared by unknown, duplicate declared by *flamingo.me/dingo.declaringModuleB`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.EqualError(t, test.init(t), test.want)
 		})
 	}
 }
