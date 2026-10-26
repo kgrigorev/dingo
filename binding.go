@@ -18,7 +18,7 @@ type (
 		annotatedWith string
 		scope         Scope
 
-		declaredBy Module // module whose configuration created the binding, nil if none
+		declaredBy Module // module whose initialization created the binding, nil if none
 	}
 
 	// Instance holds quick-references to type and value

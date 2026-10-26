@@ -48,7 +48,7 @@ type (
 		stage                uint                                 // current stage
 		delayed              []interface{}                        // delayed bindings
 		buildEagerSingletons bool                                 // whether to build singletons
-		currentModule        Module                               // module InitModules is configuring, nil outside of it
+		currentModule        Module                               // module InitModules is initializing, nil outside of it
 	}
 
 	// overrides are evaluated lazy, so they are scheduled here
@@ -184,7 +184,7 @@ func (injector *Injector) InitModules(modules ...Module) error {
 
 // initModule injects into the module and configures it. Every binding created
 // meanwhile records the module as its declaring module. The previous module is
-// restored afterwards, also on errors, panics and nested InitModules calls.
+// restored on return or panic, so a nested InitModules call keeps the outer one.
 func (injector *Injector) initModule(module Module) error {
 	previous := injector.currentModule
 	injector.currentModule = module
