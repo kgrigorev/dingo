@@ -9,7 +9,7 @@ import "reflect"
 type Inspector struct {
 	InspectBinding      func(of reflect.Type, annotation string, to reflect.Type, provider, instance *reflect.Value, in Scope, declaredBy Module)
 	InspectMultiBinding func(of reflect.Type, index int, annotation string, to reflect.Type, provider, instance *reflect.Value, in Scope, declaredBy Module)
-	InspectMapBinding   func(of reflect.Type, key string, annotation string, to reflect.Type, provider, instance *reflect.Value, in Scope)
+	InspectMapBinding   func(of reflect.Type, key string, annotation string, to reflect.Type, provider, instance *reflect.Value, in Scope, declaredBy Module)
 	InspectParent       func(parent *Injector)
 }
 
@@ -60,7 +60,8 @@ func (injector *Injector) Inspect(inspector Inspector) {
 				if binding.instance != nil {
 					ival = &binding.instance.ivalue
 				}
-				inspector.InspectMapBinding(t, key, binding.annotatedWith, binding.to, pfnc, ival, binding.scope)
+
+				inspector.InspectMapBinding(t, key, binding.annotatedWith, binding.to, pfnc, ival, binding.scope, binding.declaredBy)
 			}
 		}
 	}
