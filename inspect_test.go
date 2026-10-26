@@ -62,6 +62,30 @@ func TestInspect_DeclaringModule(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "multibindings report the module that declared them",
+			setup: func(t *testing.T) (*dingo.Injector, map[string]dingo.Module) {
+				t.Helper()
+
+				a := &inspectModuleA{configure: func(injector *dingo.Injector) {
+					injector.BindMulti(new(inspectIface)).To(inspectImpl{})
+				}}
+				b := &inspectModuleB{configure: func(injector *dingo.Injector) {
+					injector.BindMulti(new(inspectIface)).ToProvider(func() *inspectImpl { return nil })
+					injector.BindMulti(new(inspectIface)).AnnotatedWith("b").ToInstance(new(inspectImpl))
+				}}
+
+				injector, err := dingo.NewInjector(a, b)
+				require.NoError(t, err)
+
+				return injector, map[string]dingo.Module{
+					"Bind dingo.Injector[0]":                                    nil,
+					"BindMulti dingo_test.inspectIface[0]":                      a,
+					"BindMulti dingo_test.inspectIface[1]":                      b,
+					"BindMulti dingo_test.inspectIface annotated with \"b\"[2]": b,
+				}
+			},
+		},
 	}
 
 	for _, test := range tests {
@@ -87,6 +111,9 @@ func inspectDeclaringModules(injector *dingo.Injector) map[string]dingo.Module {
 			binding := inspectKey("Bind", of, annotation)
 			got[fmt.Sprintf("%s[%d]", binding, count[binding])] = declaredBy
 			count[binding]++
+		},
+		InspectMultiBinding: func(of reflect.Type, index int, annotation string, _ reflect.Type, _, _ *reflect.Value, _ dingo.Scope, declaredBy dingo.Module) {
+			got[fmt.Sprintf("%s[%d]", inspectKey("BindMulti", of, annotation), index)] = declaredBy
 		},
 	})
 
