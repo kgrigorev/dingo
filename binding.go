@@ -17,6 +17,8 @@ type (
 		eager         bool
 		annotatedWith string
 		scope         Scope
+
+		declaredBy Module // module whose configuration created the binding, nil if none
 	}
 
 	// Instance holds quick-references to type and value

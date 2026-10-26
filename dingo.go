@@ -48,6 +48,7 @@ type (
 		stage                uint                                 // current stage
 		delayed              []interface{}                        // delayed bindings
 		buildEagerSingletons bool                                 // whether to build singletons
+		currentModule        Module                               // module InitModules is configuring, nil outside of it
 	}
 
 	// overrides are evaluated lazy, so they are scheduled here
@@ -121,12 +122,14 @@ func (injector *Injector) InitModules(modules ...Module) error {
 	}
 
 	for _, module := range modules {
+		injector.currentModule = module
 		if err := injector.requestInjection(module, traceCircular); err != nil {
 			erroredModule := reflect.TypeOf(module).Elem()
 			return fmt.Errorf("initmodules: injection into %q failed: %w", erroredModule.PkgPath()+"."+erroredModule.Name(), err)
 		}
 		module.Configure(injector)
 	}
+	injector.currentModule = nil
 
 	// evaluate overrides when modules were loaded
 	for _, override := range injector.overrides {
@@ -613,6 +616,7 @@ func (injector *Injector) BindMulti(what interface{}) *Binding {
 	}
 	binding := new(Binding)
 	binding.typeof = bindtype
+	binding.declaredBy = injector.currentModule
 	imb := injector.multibindings[bindtype]
 	imb = append(imb, binding)
 	injector.multibindings[bindtype] = imb
@@ -627,6 +631,7 @@ func (injector *Injector) BindMap(what interface{}, key string) *Binding {
 	}
 	binding := new(Binding)
 	binding.typeof = bindtype
+	binding.declaredBy = injector.currentModule
 	bindingMap := injector.mapbindings[bindtype]
 	if bindingMap == nil {
 		bindingMap = make(map[string]*Binding)
@@ -672,6 +677,7 @@ func (injector *Injector) Bind(what interface{}) *Binding {
 	}
 	binding := new(Binding)
 	binding.typeof = bindtype
+	binding.declaredBy = injector.currentModule
 	injector.bindings[bindtype] = append(injector.bindings[bindtype], binding)
 	return binding
 }
