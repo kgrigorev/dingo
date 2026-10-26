@@ -341,7 +341,11 @@ type errUnbound struct {
 }
 
 func (err errUnbound) Error() string {
-	return fmt.Sprintf("binding is not bound: %v for %s", err.binding, err.typ)
+	// Leave out the declaring module, it would only show up as a pointer.
+	binding := *err.binding
+	binding.declaredBy = nil
+
+	return fmt.Sprintf("binding is not bound: %v for %s", &binding, err.typ)
 }
 
 func (injector *Injector) resolveBinding(binding *Binding, t reflect.Type, optional bool, circularTrace []circularTraceEntry) (reflect.Value, error) {

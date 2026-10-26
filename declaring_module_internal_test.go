@@ -453,6 +453,25 @@ func TestInitModules_DuplicateBindingErrorNamesTheDeclaringModules(t *testing.T)
 	}
 }
 
+func TestErrUnbound_DoesNotPrintTheDeclaringModulePointer(t *testing.T) {
+	t.Parallel()
+
+	a := &declaringModuleA{configure: func(injector *Injector) {
+		injector.Bind(new(string))
+	}}
+
+	injector, err := NewInjector(a)
+	require.NoError(t, err)
+
+	binding := injector.bindings[reflect.TypeFor[string]()][0]
+	require.Same(t, a, binding.declaredBy)
+
+	message := errUnbound{binding: binding, typ: binding.typeof}.Error()
+
+	assert.Contains(t, message, "binding is not bound: ")
+	assert.NotContains(t, message, fmt.Sprintf("%p", a))
+}
+
 func TestBinding_equalIgnoresTheDeclaringModule(t *testing.T) {
 	t.Parallel()
 
