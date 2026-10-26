@@ -48,6 +48,10 @@ func (*declaringUnresolvableModule) Configure(*Injector) {}
 
 func (d *declaringDelayed) Inject(injector *Injector) { d.inject(injector) }
 
+// declaringFuncModuleA and declaringFuncModuleB are used as ModuleFunc modules.
+func declaringFuncModuleA(injector *Injector) { injector.Bind(new(string)).ToInstance("a") }
+func declaringFuncModuleB(injector *Injector) { injector.Bind(new(string)).ToInstance("b") }
+
 func TestInitModules_DeclaringModule(t *testing.T) {
 	t.Parallel()
 
@@ -477,6 +481,18 @@ func TestInitModules_DuplicateBindingErrorNamesTheDeclaringModules(t *testing.T)
 			},
 			want: `already known binding for "string" with annotation "" | Known binding: "" Try "" | ` +
 				`Known binding declared by unknown, duplicate declared by *flamingo.me/dingo.declaringModuleB`,
+		},
+		{
+			name: "ModuleFunc modules are named by their function",
+			init: func(t *testing.T) error {
+				t.Helper()
+
+				_, err := NewInjector(ModuleFunc(declaringFuncModuleA), ModuleFunc(declaringFuncModuleB))
+
+				return err
+			},
+			want: `already known binding for "string" with annotation "" | Known binding: "" Try "" | ` +
+				`Known binding declared by flamingo.me/dingo.declaringFuncModuleA, duplicate declared by flamingo.me/dingo.declaringFuncModuleB`,
 		},
 	}
 

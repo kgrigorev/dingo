@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -239,9 +240,17 @@ func moduleName(module Module) string {
 
 // declaringModuleName names the module that declared a binding, or returns
 // "unknown" if the binding was created outside of module initialization.
+// A ModuleFunc is named by its function, so the name points to the source.
+// Closures made from one func literal share that name.
 func declaringModuleName(module Module) string {
 	if module == nil {
 		return "unknown"
+	}
+
+	if function, ok := module.(ModuleFunc); ok {
+		if fn := runtime.FuncForPC(reflect.ValueOf(function).Pointer()); fn != nil {
+			return fn.Name()
+		}
 	}
 
 	return moduleName(module)
