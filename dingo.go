@@ -107,6 +107,13 @@ func (injector *Injector) Child() (*Injector, error) {
 
 // InitModules initializes the injector with the given modules
 func (injector *Injector) InitModules(modules ...Module) error {
+	// Only the module walk below sets a declaring module. A nested call from
+	// a module's Configure gives the outer module back when it returns.
+	outer := injector.currentModule
+	injector.currentModule = nil
+
+	defer func() { injector.currentModule = outer }()
+
 	injector.stage = INIT
 
 	mg := newModuleGraph()
@@ -183,13 +190,12 @@ func (injector *Injector) InitModules(modules ...Module) error {
 }
 
 // initModule injects into the module and configures it. Every binding created
-// meanwhile records the module as its declaring module. The previous module is
-// restored on return or panic, so a nested InitModules call keeps the outer one.
+// meanwhile records the module as its declaring module. The module is cleared
+// again on return or panic.
 func (injector *Injector) initModule(module Module) error {
-	previous := injector.currentModule
 	injector.currentModule = module
 
-	defer func() { injector.currentModule = previous }()
+	defer func() { injector.currentModule = nil }()
 
 	if err := injector.requestInjection(module, traceCircular); err != nil {
 		erroredModule := reflect.TypeOf(module).Elem()

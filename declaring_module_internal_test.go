@@ -321,6 +321,37 @@ func TestInitModules_BindingsOutsideModuleConfigurationHaveNoDeclaringModule(t *
 			},
 		},
 		{
+			name: "bound by a delayed injection that a nested InitModules runs",
+			setup: func(t *testing.T) (*Injector, map[string]Module) {
+				t.Helper()
+
+				a := &declaringModuleA{configure: func(injector *Injector) {
+					delayed := &declaringDelayed{inject: func(injector *Injector) {
+						injector.Bind(new(string)).ToInstance("delayed")
+					}}
+					if err := injector.RequestInjection(delayed); err != nil {
+						panic(err)
+					}
+				}}
+				b := &declaringModuleB{configure: func(injector *Injector) {
+					if err := injector.InitModules(ModuleFunc(func(*Injector) {})); err != nil {
+						panic(err)
+					}
+
+					injector.Bind(new(int)).ToInstance(1)
+				}}
+
+				injector, err := NewInjector(a, b)
+				require.NoError(t, err)
+
+				return injector, map[string]Module{
+					"Bind dingo.Injector[0]": nil,
+					"Bind int[0]":            b,
+					"Bind string[0]":         nil,
+				}
+			},
+		},
+		{
 			name: "bound by the provider of an eager singleton",
 			setup: func(t *testing.T) (*Injector, map[string]Module) {
 				t.Helper()
