@@ -505,6 +505,21 @@ func TestInitModules_DuplicateBindingErrorNamesTheDeclaringModules(t *testing.T)
 	}
 }
 
+func TestInitModules_DuplicateBindingErrorWrapsErrDuplicateBinding(t *testing.T) {
+	t.Parallel()
+
+	injector, err := NewInjector()
+	require.NoError(t, err)
+
+	injector.Bind(new(string)).ToInstance("direct")
+
+	err = injector.InitModules(ModuleFunc(func(injector *Injector) {
+		injector.Bind(new(string)).ToInstance("module")
+	}))
+
+	assert.ErrorIs(t, err, errDuplicateBinding)
+}
+
 func TestErrUnbound_DoesNotPrintTheDeclaringModulePointer(t *testing.T) {
 	t.Parallel()
 
