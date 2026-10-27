@@ -208,7 +208,8 @@ func TestInspect_DeclaringModule(t *testing.T) {
 
 // inspectDeclaringModules returns the declaring module Inspect reports for
 // every binding, keyed by the bind method, the bound type, the annotation and
-// the position. Single bindings of one type are numbered in binding order.
+// the position. Single bindings of one type and annotation are numbered in
+// binding order.
 // Keys of bindings reported by a parent injector start with "parent ".
 func inspectDeclaringModules(injector *dingo.Injector) map[string]dingo.Module {
 	got := make(map[string]dingo.Module)
