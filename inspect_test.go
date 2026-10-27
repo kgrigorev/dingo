@@ -443,6 +443,37 @@ func TestInspect_NoDeclaringModuleOutsideModuleInitialization(t *testing.T) {
 			},
 		},
 		{
+			name: "bound by a delayed injection that a nested InitModules without modules runs",
+			setup: func(t *testing.T) (*dingo.Injector, map[string]dingo.Module) {
+				t.Helper()
+
+				a := &inspectModuleA{configure: func(injector *dingo.Injector) {
+					delayed := &inspectDelayed{inject: func(injector *dingo.Injector) {
+						injector.Bind(new(string)).ToInstance("delayed")
+					}}
+					if err := injector.RequestInjection(delayed); err != nil {
+						panic(err)
+					}
+				}}
+				b := &inspectModuleB{configure: func(injector *dingo.Injector) {
+					if err := injector.InitModules(); err != nil {
+						panic(err)
+					}
+
+					injector.Bind(new(int)).ToInstance(1)
+				}}
+
+				injector, err := dingo.NewInjector(a, b)
+				require.NoError(t, err)
+
+				return injector, map[string]dingo.Module{
+					"Bind dingo.Injector[0]": nil,
+					"Bind int[0]":            b,
+					"Bind string[0]":         nil,
+				}
+			},
+		},
+		{
 			name: "bound by the provider of an eager singleton",
 			setup: func(t *testing.T) (*dingo.Injector, map[string]dingo.Module) {
 				t.Helper()
