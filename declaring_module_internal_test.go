@@ -125,6 +125,11 @@ func TestBinding_equalIgnoresTheDeclaringModule(t *testing.T) {
 			right: bind(new(string), b).ToProvider(func() string { return "other" }),
 		},
 		{
+			name:  "provider and no provider",
+			left:  bind(new(string), a).ToProvider(provider),
+			right: bind(new(string), b),
+		},
+		{
 			name:  "different annotation",
 			left:  bind(new(string), a).AnnotatedWith("x"),
 			right: bind(new(string), b).AnnotatedWith("y"),
