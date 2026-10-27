@@ -132,6 +132,38 @@ func TestInspect_DeclaringModule(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "a child reports its own modules and its parent keeps its modules",
+			setup: func(t *testing.T) (*dingo.Injector, map[string]dingo.Module) {
+				t.Helper()
+
+				a := &inspectModuleA{configure: func(injector *dingo.Injector) {
+					injector.Bind(new(string)).ToInstance("parent")
+					injector.BindMulti(new(string)).ToInstance("parent")
+				}}
+				b := &inspectModuleB{configure: func(injector *dingo.Injector) {
+					injector.Bind(new(string)).ToInstance("child")
+					injector.BindMap(new(string), "child").ToInstance("child")
+				}}
+
+				parent, err := dingo.NewInjector(a)
+				require.NoError(t, err)
+
+				child, err := parent.Child()
+				require.NoError(t, err)
+				require.NoError(t, child.InitModules(b))
+
+				return child, map[string]dingo.Module{
+					"Bind dingo.Injector[0]":        nil,
+					"Bind dingo.Injector[1]":        nil,
+					"Bind string[0]":                b,
+					`BindMap string["child"]`:       b,
+					"parent Bind dingo.Injector[0]": nil,
+					"parent Bind string[0]":         a,
+					"parent BindMulti string[0]":    a,
+				}
+			},
+		},
 	}
 
 	for _, test := range tests {
@@ -148,6 +180,7 @@ func TestInspect_DeclaringModule(t *testing.T) {
 // inspectDeclaringModules returns the declaring module Inspect reports for
 // every binding, keyed by the bind method, the bound type, the annotation and
 // the position. Single bindings of one type are numbered in binding order.
+// Keys of bindings reported by a parent injector start with "parent ".
 func inspectDeclaringModules(injector *dingo.Injector) map[string]dingo.Module {
 	got := make(map[string]dingo.Module)
 	count := make(map[string]int)
@@ -163,6 +196,11 @@ func inspectDeclaringModules(injector *dingo.Injector) map[string]dingo.Module {
 		},
 		InspectMapBinding: func(of reflect.Type, key string, annotation string, _ reflect.Type, _, _ *reflect.Value, _ dingo.Scope, declaredBy dingo.Module) {
 			got[fmt.Sprintf("%s[%q]", inspectKey("BindMap", of, annotation), key)] = declaredBy
+		},
+		InspectParent: func(parent *dingo.Injector) {
+			for binding, module := range inspectDeclaringModules(parent) {
+				got["parent "+binding] = module
+			}
 		},
 	})
 
