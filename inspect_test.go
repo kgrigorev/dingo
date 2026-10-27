@@ -110,6 +110,28 @@ func TestInspect_DeclaringModule(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "bindings of a ModuleFunc report that function",
+			setup: func(t *testing.T) (*dingo.Injector, map[string]dingo.Module) {
+				t.Helper()
+
+				var module dingo.ModuleFunc = func(injector *dingo.Injector) {
+					injector.Bind(new(string)).ToInstance("func")
+					injector.BindMulti(new(string)).ToInstance("func")
+					injector.BindMap(new(string), "func").ToInstance("func")
+				}
+
+				injector, err := dingo.NewInjector(module)
+				require.NoError(t, err)
+
+				return injector, map[string]dingo.Module{
+					"Bind dingo.Injector[0]": nil,
+					"Bind string[0]":         module,
+					"BindMulti string[0]":    module,
+					`BindMap string["func"]`: module,
+				}
+			},
+		},
 	}
 
 	for _, test := range tests {
