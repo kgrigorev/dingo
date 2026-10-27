@@ -6,6 +6,8 @@ import "reflect"
 // declaredBy is the module whose initialization created the binding.
 // It is nil if that is unknown, because the binding was created outside of
 // module initialization, like the injector's own binding.
+// declaredBy can be a ModuleFunc, which is not comparable: using it with == or
+// as a map key panics. Compare or group by reflect.ValueOf(declaredBy) instead.
 type Inspector struct {
 	InspectBinding      func(of reflect.Type, annotation string, to reflect.Type, provider, instance *reflect.Value, in Scope, declaredBy Module)
 	InspectMultiBinding func(of reflect.Type, index int, annotation string, to reflect.Type, provider, instance *reflect.Value, in Scope, declaredBy Module)
