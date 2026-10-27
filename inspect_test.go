@@ -164,6 +164,35 @@ func TestInspect_DeclaringModule(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "bindings made outside module initialization report no module",
+			setup: func(t *testing.T) (*dingo.Injector, map[string]dingo.Module) {
+				t.Helper()
+
+				a := &inspectModuleA{configure: func(injector *dingo.Injector) {
+					injector.Bind(new(string)).ToInstance("a")
+				}}
+
+				injector, err := dingo.NewInjector(a)
+				require.NoError(t, err)
+
+				injector.Bind(new(int)).ToInstance(1)
+				injector.BindMulti(new(int)).ToInstance(1)
+				injector.BindMap(new(int), "direct").ToInstance(1)
+
+				// Resolving an unbound type creates no binding to report.
+				_, err = injector.GetInstance(new(inspectImpl))
+				require.NoError(t, err)
+
+				return injector, map[string]dingo.Module{
+					"Bind dingo.Injector[0]": nil,
+					"Bind string[0]":         a,
+					"Bind int[0]":            nil,
+					"BindMulti int[0]":       nil,
+					`BindMap int["direct"]`:  nil,
+				}
+			},
+		},
 	}
 
 	for _, test := range tests {
