@@ -12,23 +12,6 @@ import (
 // The declaring module's behaviour is tested through Inspect in
 // inspect_test.go. These tests cover what Inspect cannot show.
 
-type (
-	declaringIface     interface{ declared() }
-	declaringImpl      struct{}
-	declaringOtherImpl struct{}
-
-	// Each module type carries its configuration as a field, so pointers to
-	// two instances never compare equal.
-	declaringModuleA struct{ configure func(*Injector) }
-	declaringModuleB struct{ configure func(*Injector) }
-)
-
-func (*declaringImpl) declared()      {}
-func (*declaringOtherImpl) declared() {}
-
-func (m *declaringModuleA) Configure(injector *Injector) { m.configure(injector) }
-func (m *declaringModuleB) Configure(injector *Injector) { m.configure(injector) }
-
 func TestInitModules_DuplicateBindingErrorWrapsErrDuplicateBinding(t *testing.T) {
 	t.Parallel()
 
@@ -47,28 +30,23 @@ func TestInitModules_DuplicateBindingErrorWrapsErrDuplicateBinding(t *testing.T)
 func TestErrUnbound_DoesNotPrintTheDeclaringModulePointer(t *testing.T) {
 	t.Parallel()
 
-	a := &declaringModuleA{configure: func(injector *Injector) {
-		injector.Bind(new(string))
-	}}
-
-	injector, err := NewInjector(a)
-	require.NoError(t, err)
-
-	binding := injector.bindings[reflect.TypeFor[string]()][0]
-	require.Same(t, a, binding.declaredBy)
+	module := ModuleFunc(func(*Injector) {})
+	binding := &Binding{typeof: reflect.TypeFor[string](), declaredBy: module}
 
 	message := errUnbound{binding: binding, typ: binding.typeof}.Error()
 
 	assert.Contains(t, message, "binding is not bound: ")
-	assert.NotContains(t, message, fmt.Sprintf("%p", a))
+	assert.NotContains(t, message, fmt.Sprintf("%p", module))
 }
 
 func TestBinding_equalIgnoresTheDeclaringModule(t *testing.T) {
 	t.Parallel()
 
-	a := new(declaringModuleA)
-	b := new(declaringModuleB)
-	instance := new(declaringImpl)
+	// Non-nil funcs are never deeply equal, so comparing the modules would
+	// make every equal case fail.
+	a := ModuleFunc(func(*Injector) {})
+	b := ModuleFunc(func(*Injector) {})
+	instance := new(int)
 	provider := func() string { return "provider" }
 
 	bind := func(what any, module Module) *Binding {
@@ -82,14 +60,14 @@ func TestBinding_equalIgnoresTheDeclaringModule(t *testing.T) {
 	}{
 		{
 			name:  "same target",
-			left:  bind(new(declaringIface), a).To(declaringImpl{}),
-			right: bind(new(declaringIface), b).To(declaringImpl{}),
+			left:  bind(new(any), a).To(""),
+			right: bind(new(any), b).To(""),
 			equal: true,
 		},
 		{
 			name:  "same instance",
-			left:  bind(new(declaringIface), a).ToInstance(instance),
-			right: bind(new(declaringIface), b).ToInstance(instance),
+			left:  bind(new(*int), a).ToInstance(instance),
+			right: bind(new(*int), b).ToInstance(instance),
 			equal: true,
 		},
 		{
@@ -111,8 +89,8 @@ func TestBinding_equalIgnoresTheDeclaringModule(t *testing.T) {
 		},
 		{
 			name:  "different target",
-			left:  bind(new(declaringIface), a).To(declaringImpl{}),
-			right: bind(new(declaringIface), b).To(declaringOtherImpl{}),
+			left:  bind(new(any), a).To(""),
+			right: bind(new(any), b).To(0),
 		},
 		{
 			name:  "different instance",
