@@ -19,6 +19,7 @@ var (
 	ErrInitModules           = errors.New("initialization of modules failed")
 	ErrInvalidInjectReceiver = errors.New("usage of 'Inject' method with struct receiver is not allowed")
 	errPointersToInterface   = errors.New(" Do not use pointers to interface")
+	errDuplicateBinding      = errors.New("already known binding")
 
 	traceCircular    []circularTraceEntry
 	injectionTracing = false
@@ -163,9 +164,9 @@ func (injector *Injector) InitModules(modules ...Module) error {
 				if binding.to != nil {
 					duplicateBinding = fmt.Sprintf("%#v%#v", binding.to.PkgPath(), binding.to.Name())
 				}
-				//nolint:err113 // wrapping a sentinel error would change the existing message
-				return fmt.Errorf("already known binding for %q with annotation %q | Known binding: %q Try %q | Known binding declared by %s, duplicate declared by %s",
-					typ, binding.annotatedWith, knownBinding, duplicateBinding, declaringModuleName(known.declaredBy), declaringModuleName(binding.declaredBy))
+
+				return fmt.Errorf("%w for %q with annotation %q | Known binding: %q Try %q | Known binding declared by %s, duplicate declared by %s",
+					errDuplicateBinding, typ, binding.annotatedWith, knownBinding, duplicateBinding, declaringModuleName(known.declaredBy), declaringModuleName(binding.declaredBy))
 			}
 			known[binding.annotatedWith] = binding
 		}

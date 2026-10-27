@@ -13,19 +13,45 @@ import (
 )
 
 type (
-	inspectIface interface{ inspected() }
-	inspectImpl  struct{}
+	inspectIface     interface{ inspected() }
+	inspectImpl      struct{}
+	inspectOtherImpl struct{}
 
 	// Each module type carries its configuration as a field, so pointers to
 	// two instances never compare equal and tests can define bindings inline.
 	inspectModuleA struct{ configure func(*dingo.Injector) }
 	inspectModuleB struct{ configure func(*dingo.Injector) }
+
+	// inspectInjectedModule binds from its Inject method as well.
+	inspectInjectedModule struct {
+		inject, configure func(*dingo.Injector)
+	}
+
+	// inspectUnresolvableModule fails injection, so it is never configured.
+	inspectUnresolvableModule struct {
+		Missing inspectIface `inject:""`
+	}
+
+	// inspectDelayed binds while its delayed injection runs.
+	inspectDelayed struct{ inject func(*dingo.Injector) }
 )
 
-func (*inspectImpl) inspected() {}
+func (*inspectImpl) inspected()      {}
+func (*inspectOtherImpl) inspected() {}
 
 func (m *inspectModuleA) Configure(injector *dingo.Injector) { m.configure(injector) }
 func (m *inspectModuleB) Configure(injector *dingo.Injector) { m.configure(injector) }
+
+func (m *inspectInjectedModule) Inject(injector *dingo.Injector)    { m.inject(injector) }
+func (m *inspectInjectedModule) Configure(injector *dingo.Injector) { m.configure(injector) }
+
+func (*inspectUnresolvableModule) Configure(*dingo.Injector) {}
+
+func (d *inspectDelayed) Inject(injector *dingo.Injector) { d.inject(injector) }
+
+// inspectFuncModuleA and inspectFuncModuleB are used as ModuleFunc modules.
+func inspectFuncModuleA(injector *dingo.Injector) { injector.Bind(new(string)).ToInstance("a") }
+func inspectFuncModuleB(injector *dingo.Injector) { injector.Bind(new(string)).ToInstance("b") }
 
 func TestInspect_DeclaringModule(t *testing.T) {
 	t.Parallel()
@@ -111,24 +137,125 @@ func TestInspect_DeclaringModule(t *testing.T) {
 			},
 		},
 		{
-			name: "bindings of a ModuleFunc report that function",
+			name: "bindings of ModuleFuncs report their function",
 			setup: func(t *testing.T) (*dingo.Injector, map[string]dingo.Module) {
 				t.Helper()
 
-				var module dingo.ModuleFunc = func(injector *dingo.Injector) {
-					injector.Bind(new(string)).ToInstance("func")
-					injector.BindMulti(new(string)).ToInstance("func")
-					injector.BindMap(new(string), "func").ToInstance("func")
+				var f dingo.ModuleFunc = func(injector *dingo.Injector) {
+					injector.Bind(new(string)).ToInstance("f")
+					injector.BindMulti(new(string)).ToInstance("f")
+					injector.BindMap(new(string), "f").ToInstance("f")
 				}
 
-				injector, err := dingo.NewInjector(module)
+				var g dingo.ModuleFunc = func(injector *dingo.Injector) {
+					injector.BindMulti(new(string)).ToInstance("g")
+					injector.BindMap(new(string), "g").ToInstance("g")
+				}
+
+				injector, err := dingo.NewInjector(f, g)
 				require.NoError(t, err)
 
 				return injector, map[string]dingo.Module{
 					"Bind dingo.Injector[0]": nil,
-					"Bind string[0]":         module,
-					"BindMulti string[0]":    module,
-					`BindMap string["func"]`: module,
+					"Bind string[0]":         f,
+					"BindMulti string[0]":    f,
+					"BindMulti string[1]":    g,
+					`BindMap string["f"]`:    f,
+					`BindMap string["g"]`:    g,
+				}
+			},
+		},
+		{
+			name: "an override reports the overriding module in every slot it replaces",
+			setup: func(t *testing.T) (*dingo.Injector, map[string]dingo.Module) {
+				t.Helper()
+
+				a := &inspectModuleA{configure: func(injector *dingo.Injector) {
+					injector.Bind(new(string)).ToInstance("a")
+				}}
+				b := &inspectModuleB{configure: func(injector *dingo.Injector) {
+					injector.Override(new(string), "").ToInstance("b")
+				}}
+
+				injector, err := dingo.NewInjector(a, b)
+				require.NoError(t, err)
+
+				return injector, map[string]dingo.Module{
+					"Bind dingo.Injector[0]": nil,
+					"Bind string[0]":         b,
+					"Bind string[1]":         b,
+				}
+			},
+		},
+		{
+			name: "identical bindings from two modules are still allowed",
+			setup: func(t *testing.T) (*dingo.Injector, map[string]dingo.Module) {
+				t.Helper()
+
+				a := &inspectModuleA{configure: func(injector *dingo.Injector) {
+					injector.Bind(new(inspectIface)).To(inspectImpl{})
+				}}
+				b := &inspectModuleB{configure: func(injector *dingo.Injector) {
+					injector.Bind(new(inspectIface)).To(inspectImpl{})
+				}}
+
+				injector, err := dingo.NewInjector(a, b)
+				require.NoError(t, err)
+
+				return injector, map[string]dingo.Module{
+					"Bind dingo.Injector[0]":          nil,
+					"Bind dingo_test.inspectIface[0]": a,
+					"Bind dingo_test.inspectIface[1]": b,
+				}
+			},
+		},
+		{
+			name: "bindings made while a module is injected report that module",
+			setup: func(t *testing.T) (*dingo.Injector, map[string]dingo.Module) {
+				t.Helper()
+
+				m := &inspectInjectedModule{
+					inject: func(injector *dingo.Injector) {
+						injector.Bind(new(int)).ToInstance(1)
+					},
+					configure: func(injector *dingo.Injector) {
+						injector.Bind(new(string)).ToInstance("configured")
+					},
+				}
+
+				injector, err := dingo.NewInjector(m)
+				require.NoError(t, err)
+
+				return injector, map[string]dingo.Module{
+					"Bind dingo.Injector[0]": nil,
+					"Bind int[0]":            m,
+					"Bind string[0]":         m,
+				}
+			},
+		},
+		{
+			name: "a nested InitModules restores the outer module",
+			setup: func(t *testing.T) (*dingo.Injector, map[string]dingo.Module) {
+				t.Helper()
+
+				inner := &inspectModuleB{configure: func(injector *dingo.Injector) {
+					injector.Bind(new(int)).ToInstance(1)
+				}}
+				outer := &inspectModuleA{configure: func(injector *dingo.Injector) {
+					if err := injector.InitModules(inner); err != nil {
+						panic(err)
+					}
+
+					injector.Bind(new(string)).ToInstance("outer")
+				}}
+
+				injector, err := dingo.NewInjector(outer)
+				require.NoError(t, err)
+
+				return injector, map[string]dingo.Module{
+					"Bind dingo.Injector[0]": nil,
+					"Bind int[0]":            inner,
+					"Bind string[0]":         outer,
 				}
 			},
 		},
@@ -143,6 +270,7 @@ func TestInspect_DeclaringModule(t *testing.T) {
 				}}
 				b := &inspectModuleB{configure: func(injector *dingo.Injector) {
 					injector.Bind(new(string)).ToInstance("child")
+					injector.BindMulti(new(string)).ToInstance("child")
 					injector.BindMap(new(string), "child").ToInstance("child")
 				}}
 
@@ -157,6 +285,7 @@ func TestInspect_DeclaringModule(t *testing.T) {
 					"Bind dingo.Injector[0]":        nil,
 					"Bind dingo.Injector[1]":        nil,
 					"Bind string[0]":                b,
+					"BindMulti string[0]":           b,
 					`BindMap string["child"]`:       b,
 					"parent Bind dingo.Injector[0]": nil,
 					"parent Bind string[0]":         a,
@@ -165,7 +294,57 @@ func TestInspect_DeclaringModule(t *testing.T) {
 			},
 		},
 		{
-			name: "bindings made outside module initialization report no module",
+			name: "a child created during a module's configuration reports none",
+			setup: func(t *testing.T) (*dingo.Injector, map[string]dingo.Module) {
+				t.Helper()
+
+				var child *dingo.Injector
+
+				a := &inspectModuleA{configure: func(injector *dingo.Injector) {
+					var err error
+					if child, err = injector.Child(); err != nil {
+						panic(err)
+					}
+
+					injector.Bind(new(string)).ToInstance("parent")
+				}}
+
+				_, err := dingo.NewInjector(a)
+				require.NoError(t, err)
+
+				return child, map[string]dingo.Module{
+					"Bind dingo.Injector[0]":        nil,
+					"Bind dingo.Injector[1]":        nil,
+					"parent Bind dingo.Injector[0]": nil,
+					"parent Bind string[0]":         a,
+				}
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			injector, want := test.setup(t)
+
+			assertInspectedModules(t, want, inspectDeclaringModules(injector))
+		})
+	}
+}
+
+func TestInspect_NoDeclaringModuleOutsideModuleInitialization(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		// setup returns an injector that bound something outside of module
+		// initialization, and the declaring module expected for every
+		// binding it reports.
+		setup func(t *testing.T) (*dingo.Injector, map[string]dingo.Module)
+	}{
+		{
+			name: "bound directly on the injector",
 			setup: func(t *testing.T) (*dingo.Injector, map[string]dingo.Module) {
 				t.Helper()
 
@@ -180,16 +359,184 @@ func TestInspect_DeclaringModule(t *testing.T) {
 				injector.BindMulti(new(int)).ToInstance(1)
 				injector.BindMap(new(int), "direct").ToInstance(1)
 
-				// Resolving an unbound type creates no binding to report.
-				_, err = injector.GetInstance(new(inspectImpl))
-				require.NoError(t, err)
-
 				return injector, map[string]dingo.Module{
 					"Bind dingo.Injector[0]": nil,
 					"Bind string[0]":         a,
 					"Bind int[0]":            nil,
 					"BindMulti int[0]":       nil,
 					`BindMap int["direct"]`:  nil,
+				}
+			},
+		},
+		{
+			name: "resolved without a binding",
+			setup: func(t *testing.T) (*dingo.Injector, map[string]dingo.Module) {
+				t.Helper()
+
+				injector, err := dingo.NewInjector()
+				require.NoError(t, err)
+
+				// Resolving an unbound type creates no binding to report.
+				_, err = injector.GetInstance(new(inspectImpl))
+				require.NoError(t, err)
+
+				return injector, map[string]dingo.Module{
+					"Bind dingo.Injector[0]": nil,
+				}
+			},
+		},
+		{
+			name: "bound by a delayed injection",
+			setup: func(t *testing.T) (*dingo.Injector, map[string]dingo.Module) {
+				t.Helper()
+
+				a := &inspectModuleA{configure: func(injector *dingo.Injector) {
+					injector.Bind(new(int)).ToInstance(1)
+
+					delayed := &inspectDelayed{inject: func(injector *dingo.Injector) {
+						injector.Bind(new(string)).ToInstance("delayed")
+					}}
+					if err := injector.RequestInjection(delayed); err != nil {
+						panic(err)
+					}
+				}}
+
+				injector, err := dingo.NewInjector(a)
+				require.NoError(t, err)
+
+				return injector, map[string]dingo.Module{
+					"Bind dingo.Injector[0]": nil,
+					"Bind int[0]":            a,
+					"Bind string[0]":         nil,
+				}
+			},
+		},
+		{
+			name: "bound by a delayed injection that a nested InitModules runs",
+			setup: func(t *testing.T) (*dingo.Injector, map[string]dingo.Module) {
+				t.Helper()
+
+				a := &inspectModuleA{configure: func(injector *dingo.Injector) {
+					delayed := &inspectDelayed{inject: func(injector *dingo.Injector) {
+						injector.Bind(new(string)).ToInstance("delayed")
+					}}
+					if err := injector.RequestInjection(delayed); err != nil {
+						panic(err)
+					}
+				}}
+				b := &inspectModuleB{configure: func(injector *dingo.Injector) {
+					if err := injector.InitModules(dingo.ModuleFunc(func(*dingo.Injector) {})); err != nil {
+						panic(err)
+					}
+
+					injector.Bind(new(int)).ToInstance(1)
+				}}
+
+				injector, err := dingo.NewInjector(a, b)
+				require.NoError(t, err)
+
+				return injector, map[string]dingo.Module{
+					"Bind dingo.Injector[0]": nil,
+					"Bind int[0]":            b,
+					"Bind string[0]":         nil,
+				}
+			},
+		},
+		{
+			name: "bound by a delayed injection that a nested InitModules without modules runs",
+			setup: func(t *testing.T) (*dingo.Injector, map[string]dingo.Module) {
+				t.Helper()
+
+				a := &inspectModuleA{configure: func(injector *dingo.Injector) {
+					delayed := &inspectDelayed{inject: func(injector *dingo.Injector) {
+						injector.Bind(new(string)).ToInstance("delayed")
+					}}
+					if err := injector.RequestInjection(delayed); err != nil {
+						panic(err)
+					}
+				}}
+				b := &inspectModuleB{configure: func(injector *dingo.Injector) {
+					if err := injector.InitModules(); err != nil {
+						panic(err)
+					}
+
+					injector.Bind(new(int)).ToInstance(1)
+				}}
+
+				injector, err := dingo.NewInjector(a, b)
+				require.NoError(t, err)
+
+				return injector, map[string]dingo.Module{
+					"Bind dingo.Injector[0]": nil,
+					"Bind int[0]":            b,
+					"Bind string[0]":         nil,
+				}
+			},
+		},
+		{
+			name: "bound by the provider of an eager singleton",
+			setup: func(t *testing.T) (*dingo.Injector, map[string]dingo.Module) {
+				t.Helper()
+
+				a := &inspectModuleA{configure: func(injector *dingo.Injector) {
+					injector.Bind(new(int)).ToProvider(func(injector *dingo.Injector) int {
+						injector.Bind(new(string)).ToInstance("eager")
+
+						return 1
+					}).AsEagerSingleton()
+				}}
+
+				injector, err := dingo.NewInjector()
+				require.NoError(t, err)
+
+				// The global Singleton scope would cache the instance across
+				// test runs and skip the provider, so use a scope of our own.
+				injector.BindScope(dingo.NewSingletonScope())
+				require.NoError(t, injector.InitModules(a))
+
+				return injector, map[string]dingo.Module{
+					"Bind dingo.Injector[0]": nil,
+					"Bind int[0]":            a,
+					"Bind string[0]":         nil,
+				}
+			},
+		},
+		{
+			name: "bound after a module failed injection",
+			setup: func(t *testing.T) (*dingo.Injector, map[string]dingo.Module) {
+				t.Helper()
+
+				injector, err := dingo.NewInjector()
+				require.NoError(t, err)
+				require.Error(t, injector.InitModules(new(inspectUnresolvableModule)))
+
+				injector.Bind(new(string)).ToInstance("after error")
+
+				return injector, map[string]dingo.Module{
+					"Bind dingo.Injector[0]": nil,
+					"Bind string[0]":         nil,
+				}
+			},
+		},
+		{
+			name: "bound after a module's configuration panicked",
+			setup: func(t *testing.T) (*dingo.Injector, map[string]dingo.Module) {
+				t.Helper()
+
+				injector, err := dingo.NewInjector()
+				require.NoError(t, err)
+
+				a := &inspectModuleA{configure: func(injector *dingo.Injector) {
+					injector.Bind(nil)
+				}}
+
+				require.Panics(t, func() { _ = injector.InitModules(a) })
+
+				injector.Bind(new(string)).ToInstance("after panic")
+
+				return injector, map[string]dingo.Module{
+					"Bind dingo.Injector[0]": nil,
+					"Bind string[0]":         nil,
 				}
 			},
 		},
@@ -202,6 +549,76 @@ func TestInspect_DeclaringModule(t *testing.T) {
 			injector, want := test.setup(t)
 
 			assertInspectedModules(t, want, inspectDeclaringModules(injector))
+		})
+	}
+}
+
+func TestInitModules_DuplicateBindingErrorNamesTheDeclaringModules(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		init func(t *testing.T) error
+		want string
+	}{
+		{
+			name: "both bindings declared by modules",
+			init: func(t *testing.T) error {
+				t.Helper()
+
+				a := &inspectModuleA{configure: func(injector *dingo.Injector) {
+					injector.Bind(new(inspectIface)).To(inspectImpl{})
+				}}
+				b := &inspectModuleB{configure: func(injector *dingo.Injector) {
+					injector.Bind(new(inspectIface)).To(inspectOtherImpl{})
+				}}
+
+				_, err := dingo.NewInjector(a, b)
+
+				return err
+			},
+			want: `already known binding for "dingo_test.inspectIface" with annotation "" | ` +
+				`Known binding: "\"flamingo.me/dingo_test\"\"inspectImpl\"" Try "\"flamingo.me/dingo_test\"\"inspectOtherImpl\"" | ` +
+				`Known binding declared by *flamingo.me/dingo_test.inspectModuleA, duplicate declared by *flamingo.me/dingo_test.inspectModuleB`,
+		},
+		{
+			name: "a binding without a declaring module is named unknown",
+			init: func(t *testing.T) error {
+				t.Helper()
+
+				injector, err := dingo.NewInjector()
+				require.NoError(t, err)
+
+				injector.Bind(new(string)).ToInstance("direct")
+
+				b := &inspectModuleB{configure: func(injector *dingo.Injector) {
+					injector.Bind(new(string)).ToInstance("b")
+				}}
+
+				return injector.InitModules(b)
+			},
+			want: `already known binding for "string" with annotation "" | Known binding: "" Try "" | ` +
+				`Known binding declared by unknown, duplicate declared by *flamingo.me/dingo_test.inspectModuleB`,
+		},
+		{
+			name: "ModuleFunc modules are named by their function",
+			init: func(t *testing.T) error {
+				t.Helper()
+
+				_, err := dingo.NewInjector(dingo.ModuleFunc(inspectFuncModuleA), dingo.ModuleFunc(inspectFuncModuleB))
+
+				return err
+			},
+			want: `already known binding for "string" with annotation "" | Known binding: "" Try "" | ` +
+				`Known binding declared by flamingo.me/dingo_test.inspectFuncModuleA, duplicate declared by flamingo.me/dingo_test.inspectFuncModuleB`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.EqualError(t, test.init(t), test.want)
 		})
 	}
 }
