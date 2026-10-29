@@ -19,6 +19,7 @@ var (
 	ErrInitModules           = errors.New("initialization of modules failed")
 	ErrInvalidInjectReceiver = errors.New("usage of 'Inject' method with struct receiver is not allowed")
 	errPointersToInterface   = errors.New(" Do not use pointers to interface")
+	errDuplicateBinding      = errors.New("already known binding")
 
 	traceCircular    []circularTraceEntry
 	injectionTracing = false
@@ -48,6 +49,7 @@ type (
 		stage                uint                                 // current stage
 		delayed              []interface{}                        // delayed bindings
 		buildEagerSingletons bool                                 // whether to build singletons
+		currentModule        Module                               // module InitModules is initializing, nil outside of it
 	}
 
 	// overrides are evaluated lazy, so they are scheduled here
@@ -106,6 +108,13 @@ func (injector *Injector) Child() (*Injector, error) {
 
 // InitModules initializes the injector with the given modules
 func (injector *Injector) InitModules(modules ...Module) error {
+	// Only the module walk below sets a declaring module. A nested call from
+	// a module's Configure gives the outer module back when it returns.
+	outer := injector.currentModule
+	injector.currentModule = nil
+
+	defer func() { injector.currentModule = outer }()
+
 	injector.stage = INIT
 
 	mg := newModuleGraph()
@@ -121,11 +130,9 @@ func (injector *Injector) InitModules(modules ...Module) error {
 	}
 
 	for _, module := range modules {
-		if err := injector.requestInjection(module, traceCircular); err != nil {
-			erroredModule := reflect.TypeOf(module).Elem()
-			return fmt.Errorf("initmodules: injection into %q failed: %w", erroredModule.PkgPath()+"."+erroredModule.Name(), err)
+		if err := injector.initModule(module); err != nil {
+			return err
 		}
-		module.Configure(injector)
 	}
 
 	// evaluate overrides when modules were loaded
@@ -157,7 +164,9 @@ func (injector *Injector) InitModules(modules ...Module) error {
 				if binding.to != nil {
 					duplicateBinding = fmt.Sprintf("%#v%#v", binding.to.PkgPath(), binding.to.Name())
 				}
-				return fmt.Errorf("already known binding for %q with annotation %q | Known binding: %q Try %q", typ, binding.annotatedWith, knownBinding, duplicateBinding)
+
+				return fmt.Errorf("%w for %q with annotation %q | Known binding: %q Try %q | Known binding declared by %s, duplicate declared by %s",
+					errDuplicateBinding, typ, binding.annotatedWith, knownBinding, duplicateBinding, declaringModuleName(known.declaredBy), declaringModuleName(binding.declaredBy))
 			}
 			known[binding.annotatedWith] = binding
 		}
@@ -179,6 +188,24 @@ func (injector *Injector) InitModules(modules ...Module) error {
 		return nil
 	}
 	return injector.BuildEagerSingletons(false)
+}
+
+// initModule injects into the module and configures it. Every binding created
+// meanwhile records the module as its declaring module. The module is cleared
+// again on return or panic.
+func (injector *Injector) initModule(module Module) error {
+	injector.currentModule = module
+
+	defer func() { injector.currentModule = nil }()
+
+	if err := injector.requestInjection(module, traceCircular); err != nil {
+		erroredModule := reflect.TypeOf(module).Elem()
+		return fmt.Errorf("initmodules: injection into %q failed: %w", erroredModule.PkgPath()+"."+erroredModule.Name(), err)
+	}
+
+	module.Configure(injector)
+
+	return nil
 }
 
 // SetBuildEagerSingletons can be used to disable or enable building of eager singletons during InitModules
@@ -321,7 +348,11 @@ type errUnbound struct {
 }
 
 func (err errUnbound) Error() string {
-	return fmt.Sprintf("binding is not bound: %v for %s", err.binding, err.typ)
+	// Leave out the declaring module, it would only show up as a pointer.
+	binding := *err.binding
+	binding.declaredBy = nil
+
+	return fmt.Sprintf("binding is not bound: %v for %s", &binding, err.typ)
 }
 
 func (injector *Injector) resolveBinding(binding *Binding, t reflect.Type, optional bool, circularTrace []circularTraceEntry) (reflect.Value, error) {
@@ -613,6 +644,7 @@ func (injector *Injector) BindMulti(what interface{}) *Binding {
 	}
 	binding := new(Binding)
 	binding.typeof = bindtype
+	binding.declaredBy = injector.currentModule
 	imb := injector.multibindings[bindtype]
 	imb = append(imb, binding)
 	injector.multibindings[bindtype] = imb
@@ -627,6 +659,7 @@ func (injector *Injector) BindMap(what interface{}, key string) *Binding {
 	}
 	binding := new(Binding)
 	binding.typeof = bindtype
+	binding.declaredBy = injector.currentModule
 	bindingMap := injector.mapbindings[bindtype]
 	if bindingMap == nil {
 		bindingMap = make(map[string]*Binding)
@@ -672,6 +705,7 @@ func (injector *Injector) Bind(what interface{}) *Binding {
 	}
 	binding := new(Binding)
 	binding.typeof = bindtype
+	binding.declaredBy = injector.currentModule
 	injector.bindings[bindtype] = append(injector.bindings[bindtype], binding)
 	return binding
 }

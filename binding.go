@@ -17,6 +17,8 @@ type (
 		eager         bool
 		annotatedWith string
 		scope         Scope
+
+		declaredBy Module // module whose initialization created the binding, nil if none
 	}
 
 	// Instance holds quick-references to type and value
@@ -95,8 +97,27 @@ func (b *Binding) AsEagerSingleton() *Binding {
 	return b
 }
 
+// equal reports whether both bindings bind the same way. The declaring module
+// is ignored, so identical bindings from different modules do not conflict.
 func (b *Binding) equal(to *Binding) bool {
-	return reflect.DeepEqual(b, to)
+	return b.typeof == to.typeof &&
+		b.to == to.to &&
+		reflect.DeepEqual(b.instance, to.instance) &&
+		b.provider.equal(to.provider) &&
+		b.eager == to.eager &&
+		b.annotatedWith == to.annotatedWith &&
+		reflect.DeepEqual(b.scope, to.scope)
+}
+
+// equal reports whether both providers call the same function. fnctype is
+// derived from the function, so it needs no check of its own. The binding
+// back-pointer is skipped because it points at the bindings being compared.
+func (p *Provider) equal(to *Provider) bool {
+	if p == nil || to == nil {
+		return p == to
+	}
+
+	return reflect.DeepEqual(p.fnc, to.fnc)
 }
 
 // Create creates a new instance by the provider and requests injection, all provider arguments are automatically filled
