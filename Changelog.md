@@ -1,5 +1,20 @@
 # Changelog
 
+## Version v0.4.2 (2026-10-29)
+
+### Ops and CI/CD
+
+- scan dependencies with govulncheck (#101) (c3d02bae)
+
+### Documentation
+
+- **v2:** add the generic-method API design, test catalogue and implementation plan (5a80b497)
+
+### Chores and tidying
+
+- add AI-assisted development tooling (79f2bee8)
+- **deps:** update dependency golangci/golangci-lint to v2.15.0 (#105) (f27bd278)
+
 ## Version v0.4.1 (2026-09-02)
 
 ### Fixes
